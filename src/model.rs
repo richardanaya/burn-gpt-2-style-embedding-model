@@ -447,12 +447,13 @@ impl<B: Backend> Gpt2Model<B> {
     /// 
     /// In production systems, you might consider more sophisticated approaches like
     /// attention-based pooling or fine-tuning with task-specific pooling strategies.
-    pub fn get_sentence_embedding(&self, input_ids: Tensor<B, 2, Int>) -> Tensor<B, 3> {
+    pub fn get_sentence_embedding(&self, input_ids: Tensor<B, 2, Int>) -> Tensor<B, 2> {
         let embeddings = self.forward(input_ids); // [batch_size, seq_len, d_model]
         
         // Apply mean pooling: average over sequence length dimension to get sentence embeddings
-        // This transforms [batch_size, seq_len, d_model] -> [batch_size, 1, d_model]
-        embeddings.mean_dim(1) // [batch_size, d_model]
+        // This transforms [batch_size, seq_len, d_model] -> [batch_size, d_model]
+        let pooled = embeddings.mean_dim(1); // This gives [batch_size, 1, d_model]
+        pooled.squeeze_dims(&[1]) // Remove the singleton seq dimension to get [batch_size, d_model]
     }
 
     /// Get embeddings for multiple sentences
@@ -481,7 +482,7 @@ mod tests {
     fn test_gpt2_model_creation() {
         let device = Default::default();
         let config = Gpt2Config::default();
-        let model = Gpt2Model::<TestBackend>::new(config, &device);
+        let _model = Gpt2Model::<TestBackend>::new(config, &device);
         
         // Test model creation doesn't panic
         // Model is created successfully if we reach here
@@ -516,10 +517,9 @@ mod tests {
         
         // Get sentence embeddings
         let embeddings = model.get_sentence_embedding(input_ids);
-        let [batch_size, seq_len, d_model] = embeddings.dims();
+        let [batch_size, d_model] = embeddings.dims();
         
         assert_eq!(batch_size, 2);
-        assert_eq!(seq_len, 1);
         assert_eq!(d_model, 768);
     }
 }

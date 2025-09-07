@@ -168,7 +168,7 @@ async fn embed_sentence(
     ).unsqueeze_dim(0);
     
     let embedding = model.get_sentence_embedding(input_tensor);
-    let embedding: Tensor<Backend, 2> = embedding.squeeze_dims(&[1]); // Remove middle dimension to get [batch_size, d_model]
+    // embedding is now [batch_size, d_model] - already the correct shape
     let embedding_data = embedding.into_data().to_vec::<f32>().unwrap();
     
     match format {
