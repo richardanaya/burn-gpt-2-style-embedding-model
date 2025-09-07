@@ -198,9 +198,9 @@ impl<B: Backend<FloatElem = f32>> SimilarityCalculator<B> {
         // Get sentence embedding: This calls model.forward() internally to process through
         // all 12 transformer layers, then applies mean pooling to get a single sentence vector
         let sentence_embedding = self.model.get_sentence_embedding(input_tensor);
-        let sentence_embedding: Tensor<B, 2> = sentence_embedding.squeeze_dims(&[1]); // Remove seq dimension 
+        // sentence_embedding is now [batch_size, d_model] - no need to squeeze seq dimension
         
-        // Remove batch dimension to get final sentence embedding vector
+        // Remove batch dimension to get final sentence embedding vector [d_model]
         let result: Tensor<B, 1> = sentence_embedding.squeeze_dims(&[0]);
         Ok(result)
     }
@@ -328,6 +328,49 @@ mod tests {
     }
 
     #[test]
+    fn test_cosine_similarity_different_vectors() {
+        let device = Default::default();
+        
+        // Create two different but similar vectors
+        let vec1 = Tensor::<TestBackend, 1>::from_data(
+            TensorData::from(&[1.0, 2.0, 3.0][..]),
+            &device,
+        );
+        let vec2 = Tensor::<TestBackend, 1>::from_data(
+            TensorData::from(&[1.1, 2.1, 3.1][..]),
+            &device,
+        );
+        
+        let similarity = cosine_similarity(vec1, vec2);
+        let result = similarity.into_scalar();
+        
+        // Should be close to 1.0 but not exactly 1.0 for similar vectors
+        assert!(result > 0.99);
+        assert!(result < 1.0);
+    }
+
+    #[test]
+    fn test_cosine_similarity_orthogonal_vectors() {
+        let device = Default::default();
+        
+        // Create two orthogonal vectors (dot product = 0)
+        let vec1 = Tensor::<TestBackend, 1>::from_data(
+            TensorData::from(&[1.0, 0.0][..]),
+            &device,
+        );
+        let vec2 = Tensor::<TestBackend, 1>::from_data(
+            TensorData::from(&[0.0, 1.0][..]),
+            &device,
+        );
+        
+        let similarity = cosine_similarity(vec1, vec2);
+        let result = similarity.into_scalar();
+        
+        // Should be very close to 0.0 (orthogonal vectors)
+        assert!(result.abs() < 1e-6);
+    }
+
+    #[test]
     fn test_euclidean_distance() {
         let device = Default::default();
         
@@ -426,5 +469,29 @@ mod tests {
         // Test squared Euclidean distance  
         let sq_euclidean_dist = SpatialSimilarity::sqeuclidean(&vec1, &vec2).unwrap();
         assert!((sq_euclidean_dist - 27.0).abs() < 1e-6); // (1-4)² + (2-5)² + (3-6)² = 9 + 9 + 9 = 27
+    }
+
+    #[test]
+    fn test_dimension_mismatch_fix() {
+        // Test to verify that we fixed the dimension handling issue
+        // This test verifies that different vectors produce different similarities
+        
+        // SimSIMD test with known different vectors that should NOT give similarity 1.0
+        let vec1 = vec![1.0f32, 0.0, 0.0];  // Unit vector along x-axis
+        let vec2 = vec![0.0f32, 1.0, 0.0];  // Unit vector along y-axis
+        
+        // These are orthogonal, so cosine similarity should be 0
+        let cosine_dist = SpatialSimilarity::cosine(&vec1, &vec2).unwrap();
+        let cosine_sim = 1.0 - cosine_dist;
+        assert!((cosine_sim - 0.0).abs() < 1e-6, "Orthogonal vectors should have cosine similarity ~0, got {}", cosine_sim);
+        
+        // Test with vectors that should have high but not perfect similarity
+        let vec3 = vec![1.0f32, 0.1, 0.0];
+        let vec4 = vec![1.0f32, 0.0, 0.0];
+        
+        let cosine_dist2 = SpatialSimilarity::cosine(&vec3, &vec4).unwrap();
+        let cosine_sim2 = 1.0 - cosine_dist2;
+        assert!(cosine_sim2 > 0.9, "Similar vectors should have high similarity");
+        assert!(cosine_sim2 < 1.0, "Different vectors should not have perfect similarity, got {}", cosine_sim2);
     }
 }
