@@ -1,11 +1,11 @@
-pub mod model;
-pub mod training;
-pub mod tokenizer;
-pub mod similarity;
 pub mod data;
+pub mod model;
+pub mod similarity;
+pub mod tokenizer;
+pub mod training;
 
-pub use model::*;
-pub use training::*;
-pub use tokenizer::*;
-pub use similarity::*;
 pub use data::*;
+pub use model::*;
+pub use similarity::*;
+pub use tokenizer::*;
+pub use training::*;

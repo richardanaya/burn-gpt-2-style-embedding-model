@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 /// Simple tokenizer wrapper for demo purposes
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Gpt2Tokenizer {
     vocab_size: usize,
     max_length: usize,
@@ -24,17 +24,17 @@ impl Gpt2Tokenizer {
             .chars()
             .map(|c| (c as u32) % self.vocab_size as u32)
             .collect();
-        
+
         // Truncate if necessary
         if ids.len() > self.max_length {
             ids.truncate(self.max_length);
         }
-        
+
         // Pad if necessary
         while ids.len() < self.max_length {
             ids.push(50256); // End of text token ID
         }
-        
+
         Ok(ids)
     }
 
@@ -50,7 +50,8 @@ impl Gpt2Tokenizer {
 
     /// Tokenize multiple texts
     pub fn encode_batch(&self, texts: &[&str], add_special_tokens: bool) -> Result<Vec<Vec<u32>>> {
-        texts.iter()
+        texts
+            .iter()
             .map(|text| self.encode(text, add_special_tokens))
             .collect()
     }
@@ -79,7 +80,7 @@ mod tests {
     fn test_demo_tokenizer_creation() {
         let tokenizer = create_demo_tokenizer();
         assert!(tokenizer.is_ok());
-        
+
         let tokenizer = tokenizer.unwrap();
         assert!(tokenizer.vocab_size() > 0);
         assert_eq!(tokenizer.max_length(), 1024);
@@ -88,30 +89,30 @@ mod tests {
     #[test]
     fn test_encode_decode() -> Result<()> {
         let tokenizer = create_demo_tokenizer()?;
-        
+
         let text = "Hello world";
         let encoded = tokenizer.encode(text, false)?;
         let _decoded = tokenizer.decode(&encoded, false)?;
-        
+
         assert!(!encoded.is_empty());
         assert_eq!(encoded.len(), tokenizer.max_length());
-        
+
         Ok(())
     }
 
     #[test]
     fn test_batch_encoding() -> Result<()> {
         let tokenizer = create_demo_tokenizer()?;
-        
+
         let texts = vec!["Hello world", "This is a test"];
         let encoded_batch = tokenizer.encode_batch(&texts, false)?;
-        
+
         assert_eq!(encoded_batch.len(), 2);
         for encoded in encoded_batch {
             assert!(!encoded.is_empty());
             assert_eq!(encoded.len(), tokenizer.max_length());
         }
-        
+
         Ok(())
     }
 }

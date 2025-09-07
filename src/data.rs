@@ -29,17 +29,17 @@ impl Dataset {
             .from_path(path_ref)?;
 
         let mut examples = Vec::new();
-        
+
         for result in reader.deserialize() {
             match result {
                 Ok(example) => {
                     let example: TrainingExample = example;
-                    
+
                     // Validate label
                     if example.label > 1 {
                         return Err(anyhow!("Invalid label: {}. Expected 0 or 1", example.label));
                     }
-                    
+
                     examples.push(example);
                 }
                 Err(e) => {
@@ -53,8 +53,12 @@ impl Dataset {
             return Err(anyhow!("No valid examples found in dataset"));
         }
 
-        println!("Loaded {} examples from {}", examples.len(), path_ref.display());
-        
+        println!(
+            "Loaded {} examples from {}",
+            examples.len(),
+            path_ref.display()
+        );
+
         Ok(Dataset { examples })
     }
 
@@ -89,12 +93,16 @@ impl Dataset {
         let total = self.examples.len();
         let similar_count = self.examples.iter().filter(|ex| ex.label == 1).count();
         let dissimilar_count = total - similar_count;
-        
+
         DatasetStats {
             total_examples: total,
             similar_pairs: similar_count,
             dissimilar_pairs: dissimilar_count,
-            similar_ratio: if total > 0 { similar_count as f32 / total as f32 } else { 0.0 },
+            similar_ratio: if total > 0 {
+                similar_count as f32 / total as f32
+            } else {
+                0.0
+            },
         }
     }
 }
@@ -113,10 +121,16 @@ impl DatasetStats {
     pub fn print(&self) {
         println!("Dataset Statistics:");
         println!("  Total examples: {}", self.total_examples);
-        println!("  Similar pairs (label=1): {} ({:.1}%)", 
-                 self.similar_pairs, self.similar_ratio * 100.0);
-        println!("  Dissimilar pairs (label=0): {} ({:.1}%)", 
-                 self.dissimilar_pairs, (1.0 - self.similar_ratio) * 100.0);
+        println!(
+            "  Similar pairs (label=1): {} ({:.1}%)",
+            self.similar_pairs,
+            self.similar_ratio * 100.0
+        );
+        println!(
+            "  Dissimilar pairs (label=0): {} ({:.1}%)",
+            self.dissimilar_pairs,
+            (1.0 - self.similar_ratio) * 100.0
+        );
     }
 }
 
@@ -141,7 +155,7 @@ impl TrainingBatch {
         for example in examples {
             let s1_tokens = tokenizer.encode(&example.sentence1, true)?;
             let s2_tokens = tokenizer.encode(&example.sentence2, true)?;
-            
+
             sentence1_ids.push(s1_tokens);
             sentence2_ids.push(s2_tokens);
             labels.push(example.label);
@@ -170,24 +184,15 @@ mod tests {
     fn test_dataset_from_tsv() -> Result<()> {
         // Create a temporary TSV file
         let mut temp_file = NamedTempFile::new()?;
-        writeln!(
-            temp_file,
-            "id\tsentence1\tsentence2\tlabel"
-        )?;
-        writeln!(
-            temp_file,
-            "1\tHello world\tHi there\t1"
-        )?;
-        writeln!(
-            temp_file,
-            "2\tGood morning\tBad evening\t0"
-        )?;
-        
+        writeln!(temp_file, "id\tsentence1\tsentence2\tlabel")?;
+        writeln!(temp_file, "1\tHello world\tHi there\t1")?;
+        writeln!(temp_file, "2\tGood morning\tBad evening\t0")?;
+
         temp_file.flush()?;
 
         // Load dataset
         let dataset = Dataset::from_tsv(temp_file.path())?;
-        
+
         assert_eq!(dataset.len(), 2);
         assert_eq!(dataset.examples[0].sentence1, "Hello world");
         assert_eq!(dataset.examples[0].sentence2, "Hi there");
@@ -212,7 +217,7 @@ mod tests {
         assert_eq!(stats.total_examples, 3);
         assert_eq!(stats.similar_pairs, 2);
         assert_eq!(stats.dissimilar_pairs, 1);
-        assert!((stats.similar_ratio - 2.0/3.0).abs() < 1e-6);
+        assert!((stats.similar_ratio - 2.0 / 3.0).abs() < 1e-6);
 
         Ok(())
     }

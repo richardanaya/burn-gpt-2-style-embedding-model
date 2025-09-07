@@ -1,9 +1,9 @@
-use burn::prelude::*;
 use burn::nn::{
-    Linear, LinearConfig, Dropout, DropoutConfig, Embedding, EmbeddingConfig,
-    LayerNorm, LayerNormConfig, Initializer, 
     attention::{MultiHeadAttention, MultiHeadAttentionConfig},
+    Dropout, DropoutConfig, Embedding, EmbeddingConfig, Initializer, LayerNorm, LayerNormConfig,
+    Linear, LinearConfig,
 };
+use burn::prelude::*;
 use burn::tensor::activation;
 
 /// Configuration for the GPT-2 model
@@ -82,34 +82,34 @@ impl<B: Backend> Mlp<B> {
 }
 
 /// Transformer block containing multi-head attention and feed-forward network
-/// 
+///
 /// Each transformer block performs two main operations:
 /// 1. **Multi-Head Attention**: Learn relationships between tokens
 /// 2. **Feed-Forward Network**: Process and refine the attended information
-/// 
+///
 /// ## Progressive Understanding Across Layers
-/// 
+///
 /// **What Different Transformer Blocks Learn:**
-/// 
+///
 /// **Blocks 1-3 (Early Processing):**
 /// - Basic syntactic patterns and part-of-speech information
 /// - Local word relationships (adjective-noun, subject-verb)
 /// - Simple grammatical structures
-/// 
+///
 /// **Blocks 4-8 (Intermediate Processing):**
 /// - Complex syntactic relationships across longer distances
 /// - Named entity recognition and entity relationships
 /// - Coreference resolution (understanding what pronouns refer to)
 /// - More abstract grammatical concepts
-/// 
+///
 /// **Blocks 9-12 (Final Processing):**
 /// - High-level semantic concepts and abstract meanings
 /// - Long-range semantic dependencies
 /// - Contextual disambiguation of word meanings
 /// - Task-specific representations optimal for downstream tasks
-/// 
+///
 /// **Why This Progression Matters for Embeddings:**
-/// 
+///
 /// By the time we reach the final blocks, the model has built up a sophisticated
 /// understanding that captures not just what words are present, but what the
 /// sentence *means* in context. This is why we use the final layer for embeddings
@@ -217,48 +217,48 @@ impl<B: Backend> Gpt2Model<B> {
     }
 
     /// Forward pass through the model to get embeddings from the final transformer layer
-    /// 
+    ///
     /// ## Why We Use the Final Layer for Embeddings
-    /// 
+    ///
     /// This method processes input through ALL 12 transformer layers and returns embeddings
     /// from the final layer. Here's why this architectural choice is important:
-    /// 
+    ///
     /// ### Progressive Representation Learning in Transformers
-    /// 
+    ///
     /// Each transformer layer builds increasingly sophisticated representations:
-    /// 
+    ///
     /// **Layer 1-3 (Early Layers): Low-level linguistic features**
     /// - Basic syntactic patterns (noun phrases, verb phrases)
     /// - Part-of-speech information
     /// - Simple word relationships
     /// - Local dependencies and basic grammar
-    /// 
+    ///
     /// **Layer 4-8 (Middle Layers): Intermediate linguistic structures**  
     /// - Complex syntactic relationships
     /// - Named entity recognition
     /// - Coreference patterns (what "it" refers to)
     /// - Intermediate semantic relationships
-    /// 
+    ///
     /// **Layer 9-12 (Final Layers): High-level semantic understanding**
     /// - Abstract semantic concepts and meanings
     /// - Long-range semantic dependencies
     /// - Contextual word meanings and disambiguation
     /// - Task-relevant high-level representations
-    /// 
+    ///
     /// ### Why Final Layer is Best for Sentence Embeddings
-    /// 
+    ///
     /// **1. Maximum Contextual Understanding**
     /// ```
     /// Input: "The bank by the river was steep"
-    /// 
+    ///
     /// Early layers might represent "bank" with financial concepts mixed in
     /// Final layer understands from full context that "bank" means riverbank
     /// ```
-    /// 
+    ///
     /// **2. Complete Information Integration**
     /// The final layer has processed information from the entire sequence
     /// through multiple attention mechanisms, creating the most informed representation.
-    /// 
+    ///
     /// **3. Abstract Semantic Concepts**
     /// Later layers capture higher-level semantic relationships that are crucial
     /// for similarity tasks:
@@ -267,15 +267,15 @@ impl<B: Backend> Gpt2Model<B> {
     /// Final layer representations will be more similar due to semantic understanding
     /// Early layer representations might focus more on surface-level differences
     /// ```
-    /// 
+    ///
     /// **4. Research Evidence**
     /// Studies show that different layers capture different types of information:
     /// - Syntactic information peaks in middle layers
     /// - Semantic information is strongest in final layers
     /// - For sentence-level tasks, final layers consistently perform best
-    /// 
+    ///
     /// ### Alternative Layer Selection Strategies We Could Use
-    /// 
+    ///
     /// **1. Concatenating Multiple Layers**
     /// ```rust
     /// // Combine layers 9-12 for richer representation
@@ -283,21 +283,21 @@ impl<B: Backend> Gpt2Model<B> {
     /// ```
     /// - **Pros**: Captures both intermediate and final representations
     /// - **Cons**: 4x larger embeddings, potential redundancy
-    /// 
+    ///
     /// **2. Weighted Layer Combination**
     /// ```rust  
     /// // Learn weights: final_embedding = w1*layer9 + w2*layer10 + w3*layer11 + w4*layer12
     /// ```
     /// - **Pros**: Optimal layer combination for specific tasks
     /// - **Cons**: Requires additional training and parameters
-    /// 
+    ///
     /// **3. Task-Specific Layer Selection**
     /// ```rust
     /// // Use layer 6-8 for syntactic tasks, layer 10-12 for semantic tasks
     /// ```
     /// - **Pros**: Tailored to specific linguistic aspects
     /// - **Cons**: Requires task-specific knowledge and experimentation
-    /// 
+    ///
     /// **4. Earlier Layer Selection (NOT recommended for semantic embeddings)**
     /// ```rust
     /// // Using layer 3-6 embeddings
@@ -305,33 +305,33 @@ impl<B: Backend> Gpt2Model<B> {
     /// - **Why not?**: Misses crucial semantic processing
     /// - **Result**: Embeddings focus more on surface form than meaning
     /// - **Example**: "happy" and "joyful" might seem different despite similar meaning
-    /// 
+    ///
     /// ### Empirical Evidence from Research
-    /// 
+    ///
     /// **Layer Analysis Studies Show:**
     /// - **Layer 1-3**: Best for part-of-speech tagging, basic syntax
     /// - **Layer 4-8**: Best for syntactic parsing, named entity recognition  
     /// - **Layer 9-12**: Best for semantic similarity, sentiment analysis, textual entailment
-    /// 
+    ///
     /// **For Embedding Tasks Specifically:**
     /// - Sentence similarity tasks: Final layers (10-12) perform best
     /// - Semantic textual similarity: Layer 12 consistently wins
     /// - Paraphrase detection: Later layers show highest correlation with human judgments
-    /// 
+    ///
     /// ### Why Not Average Across All Layers?
-    /// 
+    ///
     /// While we could average embeddings from all layers, this would:
     /// - Dilute the sophisticated semantic understanding from final layers
     /// - Include lower-level syntactic noise that's less relevant for semantic similarity
     /// - Lose the benefit of the model's progressive abstraction process
-    /// 
+    ///
     /// ### Conclusion
-    /// 
+    ///
     /// By using the final layer, we get embeddings that represent the model's best
     /// understanding of semantic content, making them ideal for similarity tasks.
     /// This is why most successful embedding models (BERT, RoBERTa, etc.) use
     /// final or near-final layer representations for downstream tasks.
-    /// 
+    ///
     /// Returns embeddings for each token in the sequence from the final transformer layer.
     pub fn forward(&self, input_ids: Tensor<B, 2, Int>) -> Tensor<B, 3> {
         let [batch_size, seq_len] = input_ids.dims();
@@ -340,7 +340,7 @@ impl<B: Backend> Gpt2Model<B> {
         // Token embeddings: Convert token IDs to initial dense representations
         let token_embeds = self.token_embedding.forward(input_ids);
 
-        // Position embeddings: Add positional information so model knows word order  
+        // Position embeddings: Add positional information so model knows word order
         let positions = Tensor::<B, 1, Int>::arange(0..seq_len as i64, &device)
             .unsqueeze_dim(0)
             .repeat_dim(0, batch_size);
@@ -352,7 +352,7 @@ impl<B: Backend> Gpt2Model<B> {
 
         // Pass through ALL 12 transformer blocks sequentially
         // Each block adds progressively more sophisticated understanding:
-        // - Early blocks: syntax, basic word relationships  
+        // - Early blocks: syntax, basic word relationships
         // - Middle blocks: complex grammar, entity recognition
         // - Final blocks: semantic meaning, contextual understanding
         for block in &self.transformer_blocks {
@@ -365,16 +365,16 @@ impl<B: Backend> Gpt2Model<B> {
     }
 
     /// Get sentence embeddings using mean pooling strategy
-    /// 
+    ///
     /// ## Mean Pooling Explained
-    /// 
+    ///
     /// Mean pooling is a simple but effective method for converting variable-length sequences
     /// of token embeddings into fixed-size sentence representations. Here's how it works:
-    /// 
+    ///
     /// 1. **Input**: Token embeddings from the final transformer layer [batch_size, seq_len, d_model]
     /// 2. **Process**: Average all token embeddings along the sequence dimension
     /// 3. **Output**: Single sentence embedding [batch_size, d_model]
-    /// 
+    ///
     /// ### Example:
     /// ```
     /// Input sentence: "The cat sleeps"
@@ -382,27 +382,27 @@ impl<B: Backend> Gpt2Model<B> {
     /// - "The":    [0.1, -0.2, 0.3, ...]  (768 dimensions)
     /// - "cat":    [0.5, 0.1, -0.1, ...]  (768 dimensions)  
     /// - "sleeps": [-0.2, 0.4, 0.2, ...]  (768 dimensions)
-    /// 
+    ///
     /// Mean pooled sentence embedding:
     /// Average of all three: [(0.1+0.5-0.2)/3, (-0.2+0.1+0.4)/3, (0.3-0.1+0.2)/3, ...]
     /// Result: [0.133, 0.1, 0.133, ...] (768 dimensions)
     /// ```
-    /// 
+    ///
     /// ## Why Mean Pooling?
-    /// 
+    ///
     /// **Advantages:**
     /// - **Simplicity**: Easy to implement and understand
     /// - **Robustness**: Works well across different sentence lengths
     /// - **Semantic Averaging**: Captures overall semantic content of the sentence
     /// - **No Additional Parameters**: Doesn't require training additional components
-    /// 
+    ///
     /// **Considerations:**
     /// - All tokens are weighted equally (including less important function words)
     /// - May dilute important information from key tokens
     /// - Doesn't account for varying importance of different words
-    /// 
+    ///
     /// ## Alternative Pooling Strategies We Could Use
-    /// 
+    ///
     /// ### 1. Max Pooling
     /// Take the maximum value across all tokens for each dimension:
     /// ```rust
@@ -410,7 +410,7 @@ impl<B: Backend> Gpt2Model<B> {
     /// ```
     /// - **Pros**: Captures the most salient features, preserves strong signals
     /// - **Cons**: May be dominated by outlier tokens, loses averaging effect
-    /// 
+    ///
     /// ### 2. CLS Token (BERT-style)
     /// Add a special [CLS] token at the beginning, use its embedding as sentence representation:
     /// ```rust
@@ -418,7 +418,7 @@ impl<B: Backend> Gpt2Model<B> {
     /// ```
     /// - **Pros**: Designed specifically for sentence-level tasks, trainable
     /// - **Cons**: Requires training the model to use CLS effectively
-    /// 
+    ///
     /// ### 3. Attention-Based Pooling
     /// Learn attention weights to weight tokens by importance:
     /// ```rust
@@ -427,7 +427,7 @@ impl<B: Backend> Gpt2Model<B> {
     /// ```
     /// - **Pros**: Learns which tokens are most important, adaptive weighting
     /// - **Cons**: Requires additional parameters and training complexity
-    /// 
+    ///
     /// ### 4. Last Token Pooling (GPT-style)
     /// Use the embedding of the last token (like GPT models often do):
     /// ```rust
@@ -435,21 +435,21 @@ impl<B: Backend> Gpt2Model<B> {
     /// ```
     /// - **Pros**: Captures information that has "seen" the entire sequence
     /// - **Cons**: May not capture information from earlier parts of the sentence
-    /// 
+    ///
     /// ## Why We Chose Mean Pooling for This Educational Implementation
-    /// 
+    ///
     /// For this educational model, mean pooling is ideal because:
     /// 1. **Conceptual Clarity**: Easy to understand and explain
     /// 2. **No Training Required**: Works immediately with any pre-trained transformer
     /// 3. **Good Baseline**: Provides reasonable performance across many tasks
     /// 4. **Stable Results**: Less sensitive to individual token anomalies
     /// 5. **Research Foundation**: Widely used in research, making it a good starting point
-    /// 
+    ///
     /// In production systems, you might consider more sophisticated approaches like
     /// attention-based pooling or fine-tuning with task-specific pooling strategies.
     pub fn get_sentence_embedding(&self, input_ids: Tensor<B, 2, Int>) -> Tensor<B, 2> {
         let embeddings = self.forward(input_ids); // [batch_size, seq_len, d_model]
-        
+
         // Apply mean pooling: average over sequence length dimension to get sentence embeddings
         // This transforms [batch_size, seq_len, d_model] -> [batch_size, d_model]
         let pooled = embeddings.mean_dim(1); // This gives [batch_size, 1, d_model]
@@ -459,14 +459,14 @@ impl<B: Backend> Gpt2Model<B> {
     /// Get embeddings for multiple sentences
     pub fn encode_sentences(&self, input_ids_batch: Vec<Tensor<B, 1, Int>>) -> Vec<Tensor<B, 1>> {
         let mut embeddings = Vec::new();
-        
+
         for input_ids in input_ids_batch {
             let input_batch = input_ids.unsqueeze_dim(0); // Add batch dimension
             let sentence_embedding = self.get_sentence_embedding(input_batch);
             let embedding = sentence_embedding.squeeze_dims(&[0]); // Remove batch dimension
             embeddings.push(embedding);
         }
-        
+
         embeddings
     }
 }
@@ -483,24 +483,24 @@ mod tests {
         let device = Default::default();
         let config = Gpt2Config::default();
         let _model = Gpt2Model::<TestBackend>::new(config, &device);
-        
+
         // Test model creation doesn't panic
         // Model is created successfully if we reach here
     }
 
-    #[test] 
+    #[test]
     fn test_forward_pass() {
         let device = Default::default();
         let config = Gpt2Config::default();
         let model = Gpt2Model::<TestBackend>::new(config, &device);
-        
+
         // Create dummy input
         let input_ids = Tensor::<TestBackend, 2, Int>::zeros([1, 10], &device);
-        
+
         // Forward pass should not panic
         let output = model.forward(input_ids);
         let [batch_size, seq_len, d_model] = output.dims();
-        
+
         assert_eq!(batch_size, 1);
         assert_eq!(seq_len, 10);
         assert_eq!(d_model, 768);
@@ -511,15 +511,17 @@ mod tests {
         let device = Default::default();
         let config = Gpt2Config::default();
         let model = Gpt2Model::<TestBackend>::new(config, &device);
-        
+
         // Create dummy input
         let input_ids = Tensor::<TestBackend, 2, Int>::zeros([2, 10], &device);
-        
+
         // Get sentence embeddings
         let embeddings = model.get_sentence_embedding(input_ids);
         let [batch_size, d_model] = embeddings.dims();
-        
+
         assert_eq!(batch_size, 2);
         assert_eq!(d_model, 768);
     }
 }
+
+// Complex Burn training traits removed - using simpler manual training approach
