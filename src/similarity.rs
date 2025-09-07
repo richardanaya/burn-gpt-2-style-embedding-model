@@ -1,50 +1,82 @@
 use crate::{Gpt2Model, Gpt2Tokenizer};
 use anyhow::Result;
 use burn::prelude::*;
+use simsimd::SpatialSimilarity;
 
-/// Calculate cosine similarity between two vectors
+/// Calculate cosine similarity between two vectors using SimSIMD
 /// Returns a value between -1 and 1, where 1 means identical vectors
+/// 
+/// This function uses SimSIMD's optimized SIMD implementation for better performance.
+/// Note: SimSIMD returns cosine *distance* (1 - similarity), so we convert it back.
 pub fn cosine_similarity<B: Backend>(
     vec1: Tensor<B, 1>,
     vec2: Tensor<B, 1>,
 ) -> Tensor<B, 1> {
-    // Compute dot product
-    let dot_product = vec1.clone() * vec2.clone();
-    let dot_product = dot_product.sum();
-
-    // Compute magnitudes
-    let magnitude1 = vec1.clone() * vec1;
-    let magnitude1 = magnitude1.sum().sqrt();
+    // Extract data as f32 slices for SimSIMD
+    let vec1_data = vec1.to_data().to_vec::<f32>().unwrap();
+    let vec2_data = vec2.to_data().to_vec::<f32>().unwrap();
     
-    let magnitude2 = vec2.clone() * vec2;
-    let magnitude2 = magnitude2.sum().sqrt();
-
-    // Avoid division by zero
-    let denominator = magnitude1 * magnitude2;
+    // Use SimSIMD cosine similarity - note that SimSIMD returns cosine *distance*, not similarity
+    // Cosine distance = 1 - cosine similarity, so we need to convert back
+    let cosine_distance = SpatialSimilarity::cosine(&vec1_data, &vec2_data).unwrap_or(1.0) as f32;
+    let cosine_similarity = 1.0 - cosine_distance;
     
-    // Return cosine similarity
-    dot_product / denominator
+    // Convert back to tensor
+    let device = &vec1.device();
+    Tensor::<B, 1>::from_data(TensorData::from(&[cosine_similarity][..]), device)
 }
 
-/// Calculate Euclidean distance between two vectors
+/// Calculate Euclidean distance between two vectors using SimSIMD
 /// Returns a non-negative value where 0 means identical vectors
+/// 
+/// This function uses SimSIMD's optimized SIMD implementation for better performance.
 pub fn euclidean_distance<B: Backend>(
     vec1: Tensor<B, 1>,
     vec2: Tensor<B, 1>,
 ) -> Tensor<B, 1> {
-    let diff = vec1 - vec2;
-    let squared_diff = diff.clone() * diff;
-    squared_diff.sum().sqrt()
+    // Extract data as f32 slices for SimSIMD
+    let vec1_data = vec1.to_data().to_vec::<f32>().unwrap();
+    let vec2_data = vec2.to_data().to_vec::<f32>().unwrap();
+    
+    // Use SimSIMD Euclidean distance
+    let distance = SpatialSimilarity::euclidean(&vec1_data, &vec2_data).unwrap_or(0.0) as f32;
+    
+    // Convert back to tensor
+    let device = &vec1.device();
+    Tensor::<B, 1>::from_data(TensorData::from(&[distance][..]), device)
 }
 
 /// Calculate Manhattan distance between two vectors  
 /// Returns a non-negative value where 0 means identical vectors
+/// Note: SimSIMD doesn't provide Manhattan distance, so using custom implementation
 pub fn manhattan_distance<B: Backend>(
     vec1: Tensor<B, 1>,
     vec2: Tensor<B, 1>,
 ) -> Tensor<B, 1> {
     let diff = vec1 - vec2;
     diff.abs().sum()
+}
+
+/// Calculate squared Euclidean distance between two vectors using SimSIMD
+/// Returns a non-negative value where 0 means identical vectors
+/// 
+/// This function uses SimSIMD's optimized SIMD implementation for better performance.
+/// Squared Euclidean distance avoids the square root computation, making it faster
+/// when only relative distances are needed.
+pub fn squared_euclidean_distance<B: Backend>(
+    vec1: Tensor<B, 1>,
+    vec2: Tensor<B, 1>,
+) -> Tensor<B, 1> {
+    // Extract data as f32 slices for SimSIMD
+    let vec1_data = vec1.to_data().to_vec::<f32>().unwrap();
+    let vec2_data = vec2.to_data().to_vec::<f32>().unwrap();
+    
+    // Use SimSIMD squared Euclidean distance
+    let distance = SpatialSimilarity::sqeuclidean(&vec1_data, &vec2_data).unwrap_or(0.0) as f32;
+    
+    // Convert back to tensor
+    let device = &vec1.device();
+    Tensor::<B, 1>::from_data(TensorData::from(&[distance][..]), device)
 }
 
 /// Normalize a vector to unit length
@@ -98,10 +130,14 @@ impl<B: Backend<FloatElem = f32>> SimilarityCalculator<B> {
         // Manhattan distance  
         let manhattan_distance = manhattan_distance(embedding1.clone(), embedding2.clone()).into_scalar();
 
-        // Dot product similarity (with normalized vectors)
-        let norm_embed1 = normalize_vector(embedding1);
-        let norm_embed2 = normalize_vector(embedding2);
-        let dot_product = (norm_embed1 * norm_embed2).sum().into_scalar();
+        // Dot product similarity (with normalized vectors) using SimSIMD
+        let norm_embed1 = normalize_vector(embedding1.clone());
+        let norm_embed2 = normalize_vector(embedding2.clone());
+        
+        // Extract normalized data for SimSIMD dot product
+        let norm_embed1_data = norm_embed1.to_data().to_vec::<f32>().unwrap();
+        let norm_embed2_data = norm_embed2.to_data().to_vec::<f32>().unwrap();
+        let dot_product = SpatialSimilarity::dot(&norm_embed1_data, &norm_embed2_data).unwrap_or(0.0) as f32;
 
         Ok(SimilarityMetrics {
             cosine_similarity,
@@ -275,6 +311,27 @@ mod tests {
     }
 
     #[test]
+    fn test_squared_euclidean_distance() {
+        let device = Default::default();
+        
+        // Create two different vectors
+        let vec1 = Tensor::<TestBackend, 1>::from_data(
+            TensorData::from(&[1.0, 2.0, 3.0][..]),
+            &device,
+        );
+        let vec2 = Tensor::<TestBackend, 1>::from_data(
+            TensorData::from(&[2.0, 3.0, 4.0][..]),
+            &device,
+        );
+        
+        let distance = squared_euclidean_distance(vec1, vec2);
+        let result = distance.into_scalar();
+        
+        // Should be 3.0 (sum of squared differences: (1-2)² + (2-3)² + (3-4)² = 3)
+        assert!((result - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
     fn test_manhattan_distance() {
         let device = Default::default();
         
@@ -313,16 +370,26 @@ mod tests {
         assert!((magnitude - 1.0).abs() < 1e-6);
     }
 
-    #[test]
-    fn test_similarity_metrics_creation() {
-        let metrics = SimilarityMetrics {
-            cosine_similarity: 0.95,
-            euclidean_distance: 1.2,
-            manhattan_distance: 2.1,
-            dot_product_similarity: 0.88,
-        };
-
-        assert!((metrics.cosine_similarity - 0.95).abs() < 1e-6);
-        assert!((metrics.euclidean_distance - 1.2).abs() < 1e-6);
+    #[test] 
+    fn test_simsimd_integration() {
+        // Test that SimSIMD functions work correctly with basic vectors
+        let vec1 = vec![1.0f32, 2.0, 3.0];
+        let vec2 = vec![4.0f32, 5.0, 6.0];
+        
+        // Test cosine distance
+        let cosine_dist = SpatialSimilarity::cosine(&vec1, &vec2).unwrap();
+        assert!(cosine_dist >= 0.0 && cosine_dist <= 2.0); // Cosine distance is in [0, 2]
+        
+        // Test dot product
+        let dot_prod = SpatialSimilarity::dot(&vec1, &vec2).unwrap();
+        assert!((dot_prod - 32.0).abs() < 1e-6); // 1*4 + 2*5 + 3*6 = 32
+        
+        // Test Euclidean distance
+        let euclidean_dist = SpatialSimilarity::euclidean(&vec1, &vec2).unwrap();
+        assert!(euclidean_dist > 0.0);
+        
+        // Test squared Euclidean distance  
+        let sq_euclidean_dist = SpatialSimilarity::sqeuclidean(&vec1, &vec2).unwrap();
+        assert!((sq_euclidean_dist - 27.0).abs() < 1e-6); // (1-4)² + (2-5)² + (3-6)² = 9 + 9 + 9 = 27
     }
 }
