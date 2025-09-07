@@ -1,6 +1,17 @@
 [package]
 name = "burn-gpt2-embedding-model"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+
+[[bin]]
+name = "gpt2-embedding"
+path = "src/main.rs"
 
 [dependencies]
+burn = { version = "0.18", features = ["wgpu", "std"], default-features = false }
+clap = { version = "4.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+rand = "0.8"
