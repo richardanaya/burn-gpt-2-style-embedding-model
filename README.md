@@ -47,7 +47,86 @@ let tokens = tokenizer.encode("Hello world", true)?;
 // → [72, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, ...]
 ```
 
-**Educational Note**: Real tokenizers are much more sophisticated (using BPE or SentencePiece), but this simple version helps understand the concept.
+#### Understanding Tokenization: From Text to Numbers
+
+**Why Tokenization Matters:**
+Neural networks can only work with numbers, not text. Tokenization is the crucial bridge that converts human-readable text into numerical sequences that transformers can process.
+
+#### Real-World Tokenization vs Our Demo
+
+**Our Demo Tokenizer (Simplified):**
+- Maps each character directly to a number
+- "Hello" → [72, 101, 108, 108, 111] (ASCII values)
+- Good for learning, but inefficient for real applications
+
+**Real-World Tokenizers (BPE/SentencePiece):**
+Modern tokenizers like GPT-2's use **Byte Pair Encoding (BPE)** which creates subword tokens:
+
+```
+"unhappiness" might become:
+├── "un" → Token ID 1234
+├── "happy" → Token ID 5678  
+└── "ness" → Token ID 9012
+
+Instead of 11 character tokens, we get just 3 meaningful subword tokens!
+```
+
+**Why Subword Tokenization is Powerful:**
+- **Vocabulary Efficiency**: 50,257 tokens can represent millions of words
+- **Unknown Word Handling**: Can tokenize words never seen in training
+- **Semantic Preservation**: "happy" and "unhappy" share the "happy" token
+- **Compression**: Reduces sequence length compared to character-level
+
+#### Fragment Word Lists in Real Tokenizers
+
+Real tokenizers maintain extensive vocabularies of word fragments:
+
+```
+Common BPE tokens include:
+├── Whole words: "the" (464), "and" (290), "of" (286)
+├── Prefixes: "re" (260), "un" (403), "pre" (661)  
+├── Suffixes: "ing" (278), "ed" (276), "ly" (306)
+├── Subwords: "tion" (357), "ness" (408), "able" (489)
+└── Characters: "a" (64), "e" (68), "!" (0)
+```
+
+**Token ID Assignment Process:**
+1. **Text Input**: "The unhappy cat"
+2. **BPE Segmentation**: ["The", "un", "happy", "cat"] 
+3. **Lookup in Vocabulary**: [464, 403, 2995, 3797]
+4. **Add Special Tokens**: [50256] + [464, 403, 2995, 3797] + [50256] (start/end)
+
+#### From Token IDs to Transformer Input
+
+Once we have token IDs, the transformer needs to convert them into rich numerical representations:
+
+**Step 1: Token Embedding Lookup**
+```rust
+// Each token ID → 768-dimensional vector
+Token ID 464 ("The") → [0.1, -0.3, 0.8, 0.2, ...] // 768 numbers
+Token ID 403 ("un")  → [-0.2, 0.5, 0.1, -0.7, ...] // 768 numbers  
+Token ID 2995 ("happy") → [0.4, 0.1, -0.2, 0.9, ...] // 768 numbers
+```
+
+**Step 2: Position Encoding**
+```rust
+// Add positional information so model knows word order
+Position 0 → [0.0, 0.1, 0.0, 0.3, ...] // 768 numbers
+Position 1 → [0.1, 0.0, 0.2, 0.1, ...] // 768 numbers
+Position 2 → [0.2, 0.3, 0.1, 0.0, ...] // 768 numbers
+
+// Final input = Token Embedding + Position Embedding
+"The" input = [0.1, -0.2, 0.8, 0.5, ...] // Ready for transformer!
+```
+
+**Step 3: What These Numbers Mean**
+Each of the 768 dimensions potentially captures different linguistic features:
+- Dimensions 1-100: Semantic meaning (animal, emotion, action)
+- Dimensions 101-200: Syntactic role (noun, verb, adjective)  
+- Dimensions 201-300: Grammatical features (tense, number, gender)
+- Dimensions 301-768: Complex interactions and contextual nuances
+
+This rich 768-dimensional representation gives the transformer everything it needs to understand and process the text!
 
 ### 2. 🧠 GPT-2 Model (`src/model.rs`)
 The heart of the system - a transformer neural network with:
@@ -78,10 +157,210 @@ Layer Normalization
 Text Embeddings (768-dimensional vectors)
 ```
 
-#### Multi-Head Attention
-- **What it does**: Allows the model to focus on different parts of the input simultaneously
-- **Why 12 heads**: Each head can specialize in different types of relationships (syntax, semantics, etc.)
-- **Key insight**: Like having 12 different "attention spotlights" working in parallel
+#### Multi-Head Attention: The Heart of Understanding
+
+**What Multi-Head Attention Does:**
+Multi-head attention allows the model to focus on different parts of the input simultaneously. Think of it as having multiple "attention spotlights" that can each focus on different aspects of language understanding.
+
+**Why Multiple Heads?**
+Each head can specialize in different types of relationships and linguistic patterns:
+
+**🎯 Head Specialization Examples:**
+- **Head 1**: Focuses on subject-verb relationships ("cat" ↔ "sleeps")
+- **Head 2**: Focuses on adjective-noun relationships ("big red" ↔ "car")  
+- **Head 3**: Focuses on local word dependencies ("very" ↔ "quickly")
+- **Head 4**: Focuses on long-range dependencies ("The" ↔ "car" across sentence)
+- **Head 5**: Focuses on syntactic patterns (detecting phrases and clauses)
+- **Head 6**: Focuses on semantic similarity (synonyms and related concepts)
+- **Head 7**: Focuses on positional patterns (beginning/end of sentences)
+- **Head 8**: Focuses on rare/specific patterns (idioms, technical terms)
+- **Head 9**: Focuses on temporal relationships ("before", "after", "while")
+- **Head 10**: Focuses on causal relationships ("because", "therefore", "since")
+- **Head 11**: Focuses on comparative relationships ("more", "less", "than")
+- **Head 12**: Focuses on contextual disambiguation (resolving word meanings)
+
+#### 🔍 Concrete Example: "The big red car drove quickly"
+
+Let's see how different attention heads might analyze this sentence:
+
+**Head 1 (Subject-Verb Focus):**
+```
+"car" ──────────────► "drove" 
+ ↑                      ↑
+Strong attention: 0.9   │
+                       │
+The model learns: "car" is the subject performing "drove"
+```
+
+**Head 2 (Adjective-Noun Focus):**
+```
+"big" ────► "car" ◄──── "red"
+ ↑           ↑           ↑
+Attention:  0.8        0.8
+           
+The model learns: "big" and "red" both modify "car"
+```
+
+**Head 3 (Verb-Adverb Focus):**
+```
+"drove" ──────────────► "quickly"
+  ↑                       ↑
+Attention: 0.9            │
+                         │
+The model learns: "quickly" modifies how "drove" happened
+```
+
+**Head 4 (Long-Range Dependencies):**
+```
+"The" ────────────────────────────► "car"
+ ↑                                   ↑
+Attention: 0.6                      │
+                                   │
+The model learns: "The" determines the specific "car" being discussed
+```
+
+**Head 5 (Syntactic Patterns):**
+```
+Noun Phrase Detection:
+["The" + "big" + "red" + "car"] → Attention cluster: 0.7-0.9
+                                                      
+Verb Phrase Detection:  
+["drove" + "quickly"] → Attention cluster: 0.8
+                                          
+The model learns: Grammatical phrase boundaries
+```
+
+**Head 6 (Semantic Relationships):**
+```
+"big" ◄──► "red"     (both are descriptive attributes)
+  ↑         ↑
+Attention: 0.4       
+
+"drove" ◄──► "quickly" (action and manner are semantically linked)  
+    ↑         ↑
+Attention: 0.7
+
+The model learns: Words with similar semantic roles
+```
+
+#### 💡 How Multiple Heads Work Together
+
+**Parallel Processing:**
+All 12 heads process the sentence simultaneously, each creating their own attention patterns.
+
+**Information Integration:**
+```
+Input: "The big red car drove quickly"
+        ↓
+┌─────────────────────────────────────┐
+│ Head 1: Subject-verb patterns       │ ──┐
+│ Head 2: Adjective-noun patterns     │   │
+│ Head 3: Verb-adverb patterns        │   │  
+│ Head 4: Long-range dependencies     │   │ → Combined Understanding
+│ Head 5: Syntactic structure         │   │
+│ Head 6: Semantic relationships      │   │
+│ ... (6 more heads)                  │   │
+└─────────────────────────────────────┘ ──┘
+        ↓
+Rich 768-dimensional representation capturing:
+- Grammatical roles and relationships  
+- Semantic meaning and context
+- Syntactic structure and patterns
+- Long and short-range dependencies
+```
+
+**Why 12 Heads Specifically?**
+- **Computational Efficiency**: 768 dimensions ÷ 12 heads = 64 dimensions per head
+- **Linguistic Coverage**: Enough heads to capture diverse language patterns  
+- **Empirical Optimization**: Research shows 12 heads work well for this model size
+- **Specialization vs Redundancy**: Balance between having specialized heads and backup capacity
+
+**The Magic of Attention:**
+Each head essentially asks: "For each word, which other words in the sentence are most important for understanding its meaning in this context?" The answers from all 12 heads combine to create a rich, contextual understanding that goes far beyond simple word-by-word processing.
+
+#### 🔧 How Head Results Get Merged Together
+
+After all 12 heads have processed the input in parallel, their outputs need to be combined before feeding into the rest of the transformer. Here's exactly how this works:
+
+**Step 1: Individual Head Outputs**
+Each head produces attention-weighted representations for each token:
+```
+Head 1 output: [token1: 64-dim vector, token2: 64-dim vector, ...]
+Head 2 output: [token1: 64-dim vector, token2: 64-dim vector, ...]
+...
+Head 12 output: [token1: 64-dim vector, token2: 64-dim vector, ...]
+```
+
+**Step 2: Concatenation**
+The outputs from all heads are concatenated (joined together) for each token:
+```
+For each token position:
+├── Head 1 output: [a₁, a₂, ..., a₆₄]    (64 dimensions)
+├── Head 2 output: [b₁, b₂, ..., b₆₄]    (64 dimensions)  
+├── Head 3 output: [c₁, c₂, ..., c₆₄]    (64 dimensions)
+│   ...
+└── Head 12 output: [l₁, l₂, ..., l₆₄]   (64 dimensions)
+                    ↓
+Concatenated: [a₁, a₂, ..., a₆₄, b₁, b₂, ..., b₆₄, c₁, ..., l₆₄]
+              └─────────────── 768 dimensions total ──────────────┘
+```
+
+**Step 3: Linear Projection**
+The concatenated 768-dimensional vector goes through a learned linear transformation:
+```rust
+// Pseudo-code representation
+multi_head_output = concatenate([head1, head2, ..., head12])  // Shape: [768]
+projected_output = linear_projection(multi_head_output)       // Shape: [768]
+```
+
+This linear projection (also called the "output projection") allows the model to:
+- **Blend Information**: Learn optimal combinations of different head outputs
+- **Reduce Redundancy**: Filter out redundant information between heads
+- **Maintain Dimensionality**: Keep 768 dimensions for the residual connection
+
+**Step 4: Residual Connection & Layer Norm**
+```
+Original input (768-dim)
+       +                    ← Residual connection (preserves original info)
+Projected multi-head output (768-dim)
+       ↓
+Layer Normalization         ← Stabilizes and normalizes the combined result
+       ↓
+Fed into Feed-Forward Network
+```
+
+**Visual Summary:**
+```
+Input: "The big red car"
+         ↓
+┌─────────────────────────────────────┐
+│    Multi-Head Attention Block       │
+│ ┌─────┐ ┌─────┐       ┌─────┐      │ Each head: 768→64 dims
+│ │Head1│ │Head2│  ...  │Head12│      │
+│ │64dim│ │64dim│       │64dim │      │
+│ └─────┘ └─────┘       └─────┘      │
+│     │       │           │          │
+│     └───────┼───────────┘          │ Concatenate: 12×64→768
+│             ↓                      │
+│    [768-dimensional vector]        │
+│             ↓                      │
+│    Linear Projection (768→768)     │ Learn optimal blending
+│             ↓                      │
+│    [768-dimensional output]        │
+└─────────────────────────────────────┘
+         ↓
+    + Residual + LayerNorm
+         ↓
+    Feed-Forward Network
+```
+
+**Why This Design Works:**
+- **Parallel Specialization**: Each head can focus on different patterns independently
+- **Information Preservation**: Concatenation keeps all specialized information
+- **Adaptive Combination**: Linear projection learns how to best combine head outputs
+- **Stable Training**: Residual connections prevent information loss during deep processing
+
+This merging process ensures that the rich, specialized understanding from all 12 attention heads is effectively combined and passed forward through the transformer, creating the powerful contextual representations that make transformers so effective at understanding language!
 
 #### Feed-Forward Network (MLP)
 - **Purpose**: Processes the attended information to extract patterns
