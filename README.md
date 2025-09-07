@@ -23,6 +23,7 @@ This implementation follows the GPT-2 117M parameter configuration (but these pa
 ├── Context Window: 1024 tokens
 ├── Vocabulary Size: 50,257 (GPT-2 standard)
 └── Total Parameters: ~117M
+└── Tokenizer: qwen3 tokenizer
 ```
 
 ### How Transformers Work (For Beginners)
