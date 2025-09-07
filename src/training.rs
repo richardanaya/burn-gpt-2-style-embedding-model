@@ -5,6 +5,8 @@ use burn::prelude::*;
 use burn::record::{BinGzFileRecorder, FullPrecisionSettings, CompactRecorder};
 use burn::tensor::backend::AutodiffBackend;
 use burn::train::{LearnerBuilder, TrainOutput, TrainStep, ValidStep};
+use burn::train::metric::{Metric, MetricMetadata, MetricEntry, Adaptor};
+use burn::train::metric::state::{NumericMetricState, FormatOptions};
 use burn::data::dataloader::batcher::Batcher;
 use burn::data::dataloader::{DataLoaderBuilder, Dataset as BurnDataset};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -29,7 +31,7 @@ pub fn load_model<B: Backend>(
     device: &B::Device,
 ) -> Result<Gpt2Model<B>> {
     let mut model = Gpt2Model::new(config, device);
-    let recorder = BinGzFileRecorder::<FullPrecisionSettings>::default();
+    let recorder = CompactRecorder::new();
     model = model
         .load_file(path.as_ref().to_path_buf(), &recorder, device)
         .map_err(|e| anyhow!("Failed to load model: {}", e))?;
@@ -274,6 +276,84 @@ impl<B: Backend> Batcher<B, TrainingItem, TrainingBatch<B>> for TrainingBatcher 
 /// Training output containing loss - using RegressionOutput for compatibility
 pub type SimilarityLoss<B> = burn::train::RegressionOutput<B>;
 
+/// Input type for similarity accuracy metric
+pub struct SimilarityAccuracyInput<B: Backend> {
+    pub predictions: Tensor<B, 1>,  // Model predictions (similarity scores)
+    pub targets: Tensor<B, 1>,      // True labels (0 or 1)
+}
+
+/// Custom accuracy metric for similarity prediction following official Burn pattern
+pub struct SimilarityAccuracyMetric<B: Backend> {
+    state: NumericMetricState,
+    _b: std::marker::PhantomData<B>,
+}
+
+impl<B: Backend> Default for SimilarityAccuracyMetric<B> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<B: Backend> SimilarityAccuracyMetric<B> {
+    pub fn new() -> Self {
+        Self {
+            state: NumericMetricState::default(),
+            _b: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<B: Backend> Metric for SimilarityAccuracyMetric<B> {
+    type Input = SimilarityAccuracyInput<B>;
+
+    fn name(&self) -> String {
+        "Similarity Accuracy".to_string()
+    }
+
+    fn update(&mut self, item: &Self::Input, _metadata: &MetricMetadata) -> MetricEntry {
+        let [batch_size] = item.predictions.dims();
+        
+        // Convert predictions to binary (threshold at 0.5)
+        let predicted_labels = item.predictions.clone().greater_elem(0.5);
+        let true_labels = item.targets.clone().greater_elem(0.5);
+        
+        // Count correct predictions
+        let correct = predicted_labels.equal(true_labels).int().sum();
+        let accuracy_value = correct.clone().into_scalar().elem::<f32>() as f64 / batch_size as f64;
+        
+        self.state.update(
+            accuracy_value * 100.0, // Convert to percentage
+            batch_size,
+            FormatOptions::new(self.name()).precision(2).unit("%"),
+        )
+    }
+
+    fn clear(&mut self) {
+        self.state.reset()
+    }
+}
+
+impl<B: Backend> burn::train::metric::Numeric for SimilarityAccuracyMetric<B> {
+    fn value(&self) -> f64 {
+        self.state.value()
+    }
+}
+
+/// Adaptor to convert from RegressionOutput to SimilarityAccuracyInput
+impl<B: Backend> Adaptor<SimilarityAccuracyInput<B>> for SimilarityLoss<B> {
+    fn adapt(&self) -> SimilarityAccuracyInput<B> {
+        // Extract predictions and targets from the regression output
+        // For similarity task: output contains predictions, targets contain true labels
+        let predictions = self.output.clone().flatten::<1>(0, 1); // Flatten to 1D
+        let targets = self.targets.clone().flatten::<1>(0, 1); // Flatten to 1D
+        
+        SimilarityAccuracyInput {
+            predictions,
+            targets,
+        }
+    }
+}
+
 /// Implement TrainStep for our Gpt2Model 
 impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, SimilarityLoss<B>> for Gpt2Model<B> {
     fn step(&self, batch: TrainingBatch<B>) -> TrainOutput<SimilarityLoss<B>> {
@@ -329,7 +409,7 @@ pub fn train_with_learner<B: AutodiffBackend>(
 
     B::seed(config.seed);
 
-    let batcher = TrainingBatcher::new(tokenizer);
+    let batcher = TrainingBatcher::new(tokenizer.clone());
 
     let dataloader_train = DataLoaderBuilder::new(batcher.clone())
         .batch_size(config.batch_size)
@@ -337,11 +417,22 @@ pub fn train_with_learner<B: AutodiffBackend>(
         .num_workers(config.num_workers)
         .build(train_dataset.clone());
 
+    let validation_examples_count = validation_dataset.len();
     let dataloader_test = DataLoaderBuilder::new(batcher)
         .batch_size(config.batch_size)
         .shuffle(config.seed)
         .num_workers(config.num_workers)
-        .build(validation_dataset);
+        .build(validation_dataset.clone());
+
+    println!("\n🔥 Starting Training with Burn Framework");
+    println!("==========================================");
+    println!("📊 Training Examples: {}", train_dataset.len());
+    println!("📊 Validation Examples: {}", validation_examples_count);
+    println!("🔄 Epochs: {}", config.num_epochs);
+    println!("📦 Batch Size: {}", config.batch_size);
+    println!("🎯 Learning Rate: {}", config.learning_rate);
+    println!("💾 Output dir: {}", artifact_dir);
+    println!();
 
     let learner = LearnerBuilder::new(artifact_dir)
         .metric_train_numeric(burn::train::metric::LossMetric::new())
@@ -358,10 +449,15 @@ pub fn train_with_learner<B: AutodiffBackend>(
 
     let model_trained = learner.fit(dataloader_train, dataloader_test);
 
+    println!("\n✅ Training Complete!");
+    
     model_trained
         .save_file(format!("{artifact_dir}/model"), &CompactRecorder::new())
         .expect("Trained model should be saved successfully");
+        
+    println!("💾 Model saved to: {}/model", artifact_dir);
 }
+
 
 /// Pre-tokenized validation data (CPU-only to save GPU memory)
 #[derive(Debug)]
