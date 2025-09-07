@@ -1,7 +1,7 @@
 use anyhow::Result;
 use burn::prelude::*;
 use burn_gpt2_embedding_model::{
-    create_demo_tokenizer, load_model, save_model, Dataset, Gpt2Config, Gpt2Model,
+    create_demo_tokenizer, load_model, Dataset, Gpt2Config, Gpt2Model,
     SimilarityCalculator, Trainer, TrainingConfig, LossFunction,
 };
 use clap::{Parser, Subcommand};

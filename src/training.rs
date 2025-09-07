@@ -112,9 +112,9 @@ impl EpochStats {
 /// In a full implementation, this would include proper gradient computation and backpropagation
 pub struct Trainer<B: Backend> {
     model: Gpt2Model<B>,
-    tokenizer: Gpt2Tokenizer,
+    _tokenizer: Gpt2Tokenizer,
     config: TrainingConfig,
-    device: B::Device,
+    _device: B::Device,
     interrupt_flag: Arc<AtomicBool>,
 }
 
@@ -128,9 +128,9 @@ impl<B: Backend<FloatElem = f32>> Trainer<B> {
     ) -> Self {
         Self {
             model,
-            tokenizer,
+            _tokenizer: tokenizer,
             config,
-            device,
+            _device: device,
             interrupt_flag: Arc::new(AtomicBool::new(false)),
         }
     }
