@@ -2,12 +2,30 @@ use anyhow::Result;
 use burn::prelude::*;
 use burn_gpt2_embedding_model::{
     create_demo_tokenizer, load_model, train_model as train_model_real, Dataset, Gpt2Config,
-    Gpt2Model, LossFunction, SimilarityCalculator, TrainingConfig,
+    Gpt2Model, LossFunction, LearningRateScheduler, SimilarityCalculator, TrainingConfig,
 };
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 type Backend = burn::backend::Autodiff<burn::backend::wgpu::Wgpu>;
+
+/// Parse learning rate scheduler from string and automatically choose initial learning rate
+fn parse_learning_rate_config(scheduler_str: &str, initial_lr: Option<f64>) -> (LearningRateScheduler, f64) {
+    let (scheduler, auto_lr) = match scheduler_str.to_lowercase().as_str() {
+        "fixed" => (LearningRateScheduler::Fixed, 0.001),
+        "linear-decay" => (LearningRateScheduler::LinearDecay { final_lr: 0.00001 }, 0.01),
+        "exponential-decay" => (LearningRateScheduler::ExponentialDecay { decay_rate: 0.95 }, 0.005),
+        "step-decay" => (LearningRateScheduler::StepDecay { step_size: 3, gamma: 0.5 }, 0.01),
+        "cosine-annealing" => (LearningRateScheduler::CosineAnnealing { min_lr: 0.00001 }, 0.01),
+        _ => {
+            eprintln!("Unknown learning rate scheduler: {}. Using cosine-annealing.", scheduler_str);
+            (LearningRateScheduler::CosineAnnealing { min_lr: 0.00001 }, 0.01)
+        }
+    };
+    
+    let final_lr = initial_lr.unwrap_or(auto_lr);
+    (scheduler, final_lr)
+}
 
 /// GPT-2 Embedding Model CLI
 ///
@@ -44,9 +62,13 @@ enum Commands {
         #[arg(short, long, default_value = "2")]
         batch_size: usize,
 
-        /// Learning rate
-        #[arg(short, long, default_value = "0.0001")]
-        learning_rate: f64,
+        /// Learning rate scheduler: fixed, linear-decay, exponential-decay, step-decay, cosine-annealing
+        #[arg(long, default_value = "cosine-annealing")]
+        lr_scheduler: String,
+        
+        /// Initial learning rate (default: adaptive based on scheduler)
+        #[arg(long)]
+        initial_lr: Option<f64>,
 
         /// Loss function: contrastive, cosine, or mse
         #[arg(long, default_value = "contrastive")]
@@ -110,7 +132,8 @@ async fn main() -> Result<()> {
             output_dir,
             epochs,
             batch_size,
-            learning_rate,
+            lr_scheduler,
+            initial_lr,
             loss,
             checkpoint_every,
             resume_from,
@@ -121,7 +144,8 @@ async fn main() -> Result<()> {
                 output_dir,
                 *epochs,
                 *batch_size,
-                *learning_rate,
+                lr_scheduler,
+                *initial_lr,
                 loss,
                 *checkpoint_every,
                 resume_from.as_ref(),
@@ -246,7 +270,8 @@ async fn train_model(
     output_dir: &PathBuf,
     epochs: usize,
     batch_size: usize,
-    learning_rate: f64,
+    lr_scheduler: &str,
+    initial_lr: Option<f64>,
     loss_function: &str,
     _checkpoint_every: usize,
     resume_from: Option<&PathBuf>,
@@ -273,6 +298,9 @@ async fn train_model(
         None
     };
 
+    // Parse learning rate scheduler and automatically choose initial learning rate
+    let (lr_scheduler, initial_learning_rate) = parse_learning_rate_config(lr_scheduler, initial_lr);
+    
     // Parse loss function
     let loss_fn = match loss_function.to_lowercase().as_str() {
         "contrastive" => LossFunction::Contrastive,
@@ -289,7 +317,8 @@ async fn train_model(
 
     // Create training configuration
     let config = TrainingConfig {
-        learning_rate,
+        initial_learning_rate,
+        lr_scheduler,
         epochs,
         batch_size,
         margin: 1.0, // Default margin for contrastive loss

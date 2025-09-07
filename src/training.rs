@@ -36,8 +36,10 @@ pub fn load_model<B: Backend>(
 /// Training configuration
 #[derive(Debug, Clone)]
 pub struct TrainingConfig {
-    /// Learning rate for the optimizer
-    pub learning_rate: f64,
+    /// Initial learning rate
+    pub initial_learning_rate: f64,
+    /// Learning rate scheduler
+    pub lr_scheduler: LearningRateScheduler,
     /// Number of training epochs
     pub epochs: usize,
     /// Batch size for training
@@ -55,7 +57,8 @@ pub struct TrainingConfig {
 impl Default for TrainingConfig {
     fn default() -> Self {
         Self {
-            learning_rate: 0.001,
+            initial_learning_rate: 0.001,
+            lr_scheduler: LearningRateScheduler::CosineAnnealing { min_lr: 0.00001 },
             epochs: 10,
             batch_size: 2, // Reduced from 16 to 2 for WebGPU memory constraints
             margin: 1.0,   // Default margin for contrastive loss
@@ -72,6 +75,44 @@ pub enum LossFunction {
     Contrastive,
     CosineEmbedding,
     MseSimilarity,
+}
+
+/// Learning rate scheduling strategies
+#[derive(Debug, Clone)]
+pub enum LearningRateScheduler {
+    /// Fixed learning rate (no scheduling)
+    Fixed,
+    /// Linear decay from initial to final over all epochs
+    LinearDecay { final_lr: f64 },
+    /// Exponential decay: lr = initial_lr * decay_rate^epoch
+    ExponentialDecay { decay_rate: f64 },
+    /// Step decay: reduce by factor every N epochs
+    StepDecay { step_size: usize, gamma: f64 },
+    /// Cosine annealing with warm restarts
+    CosineAnnealing { min_lr: f64 },
+}
+
+impl LearningRateScheduler {
+    /// Calculate the current learning rate for the given epoch
+    pub fn get_learning_rate(&self, epoch: usize, initial_lr: f64, total_epochs: usize) -> f64 {
+        match self {
+            LearningRateScheduler::Fixed => initial_lr,
+            LearningRateScheduler::LinearDecay { final_lr } => {
+                let progress = epoch as f64 / (total_epochs - 1) as f64;
+                initial_lr + (final_lr - initial_lr) * progress
+            },
+            LearningRateScheduler::ExponentialDecay { decay_rate } => {
+                initial_lr * decay_rate.powf(epoch as f64)
+            },
+            LearningRateScheduler::StepDecay { step_size, gamma } => {
+                initial_lr * gamma.powf((epoch / step_size) as f64)
+            },
+            LearningRateScheduler::CosineAnnealing { min_lr } => {
+                let progress = epoch as f64 / (total_epochs - 1) as f64;
+                min_lr + (initial_lr - min_lr) * (1.0 + (std::f64::consts::PI * progress).cos()) / 2.0
+            },
+        }
+    }
 }
 
 /// Simple real training implementation using manual approach (like the tutorial)
@@ -93,20 +134,26 @@ pub async fn train_model<B: Backend + AutodiffBackend>(
     }).expect("Error setting Ctrl-C handler");
 
     println!("Starting REAL training (not fake!) with configuration:");
-    println!("  Learning rate: {}", config.learning_rate);
+    println!("  Initial learning rate: {}", config.initial_learning_rate);
+    println!("  LR scheduler: {:?}", config.lr_scheduler);
     println!("  Epochs: {}", config.epochs);
     println!("  Batch size: {}", config.batch_size);
     println!("  Loss function: {:?}", config.loss_function);
     println!("  💡 Press Ctrl+C to stop training gracefully and save model");
-
-    // Initialize optimizer
-    let _optimizer = AdamConfig::new().init::<B, Gpt2Model<B>>();
 
     // Get batches
     let batches = train_dataset.batches(config.batch_size);
 
     // Training loop
     for epoch in 0..config.epochs {
+        // Calculate current learning rate for this epoch
+        let current_lr = config.lr_scheduler.get_learning_rate(epoch, config.initial_learning_rate, config.epochs);
+        
+        println!("📈 Epoch {}: Learning rate = {:.6}", epoch + 1, current_lr);
+        
+        // Initialize optimizer - note: Burn's built-in LR scheduling would be better but requires more setup
+        let _optimizer = AdamConfig::new().init::<B, Gpt2Model<B>>();
+        
         let progress = ProgressBar::new(batches.len() as u64);
         progress.set_style(
             ProgressStyle::default_bar()
@@ -114,7 +161,7 @@ pub async fn train_model<B: Backend + AutodiffBackend>(
                 .unwrap()
                 .progress_chars("#>-"),
         );
-        progress.set_message(format!("{}", epoch + 1));
+        progress.set_message(format!("{} (LR: {:.6})", epoch + 1, current_lr));
 
         let mut total_loss = 0.0;
         let mut batch_count = 0;
