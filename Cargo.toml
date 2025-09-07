@@ -1,10 +1,10 @@
 [package]
-name = "burn-gpt2-embedding-model"
+name = "burn-gpt-n-embedding-model"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "gpt2-embedding"
+name = "gptn-embedding"
 path = "src/main.rs"
 
 [dependencies]

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use burn::prelude::*;
-use burn_gpt2_embedding_model::{
+use burn_gpt_n_embedding_model::{
     create_demo_tokenizer, load_model, train_model as train_model_real, Dataset, Gpt2Config,
     Gpt2Model, LossFunction, LearningRateScheduler, SimilarityCalculator, TrainingConfig,
 };
@@ -81,6 +81,18 @@ enum Commands {
         /// Load pre-trained model to continue training
         #[arg(long)]
         resume_from: Option<PathBuf>,
+        
+        /// Number of attention heads (default: 1)
+        #[arg(long, default_value = "1")]
+        n_heads: usize,
+        
+        /// Number of transformer layers (default: 1)
+        #[arg(long, default_value = "1")]
+        n_layers: usize,
+        
+        /// Embedding dimension size (default: 768)
+        #[arg(long, default_value = "768")]
+        d_model: usize,
     },
 
     /// Get vector embedding for a sentence
@@ -96,6 +108,18 @@ enum Commands {
         /// Output format: json or raw
         #[arg(short, long, default_value = "json")]
         format: String,
+        
+        /// Number of attention heads (default: 4)
+        #[arg(long, default_value = "4")]
+        n_heads: usize,
+        
+        /// Number of transformer layers (default: 4)
+        #[arg(long, default_value = "4")]
+        n_layers: usize,
+        
+        /// Embedding dimension size (default: 768)
+        #[arg(long, default_value = "768")]
+        d_model: usize,
     },
 
     /// Calculate similarity between two sentences
@@ -115,6 +139,18 @@ enum Commands {
         /// Show all similarity metrics (not just cosine)
         #[arg(long)]
         all_metrics: bool,
+        
+        /// Number of attention heads (default: 4)
+        #[arg(long, default_value = "4")]
+        n_heads: usize,
+        
+        /// Number of transformer layers (default: 4)
+        #[arg(long, default_value = "4")]
+        n_layers: usize,
+        
+        /// Embedding dimension size (default: 768)
+        #[arg(long, default_value = "768")]
+        d_model: usize,
     },
 }
 
@@ -137,6 +173,9 @@ async fn main() -> Result<()> {
             loss,
             checkpoint_every,
             resume_from,
+            n_heads,
+            n_layers,
+            d_model,
         } => {
             train_model(
                 train_data,
@@ -149,6 +188,9 @@ async fn main() -> Result<()> {
                 loss,
                 *checkpoint_every,
                 resume_from.as_ref(),
+                *n_heads,
+                *n_layers,
+                *d_model,
                 device,
             )
             .await
@@ -158,14 +200,20 @@ async fn main() -> Result<()> {
             model,
             sentence,
             format,
-        } => embed_sentence(model.as_ref(), sentence, format, device).await,
+            n_heads,
+            n_layers,
+            d_model,
+        } => embed_sentence(model.as_ref(), sentence, format, *n_heads, *n_layers, *d_model, device).await,
 
         Commands::Similarity {
             model,
             sentence1,
             sentence2,
             all_metrics,
-        } => calculate_similarity(model.as_ref(), sentence1, sentence2, *all_metrics, device).await,
+            n_heads,
+            n_layers,
+            d_model,
+        } => calculate_similarity(model.as_ref(), sentence1, sentence2, *all_metrics, *n_heads, *n_layers, *d_model, device).await,
     }
 }
 
@@ -174,9 +222,19 @@ async fn embed_sentence(
     model_path: Option<&PathBuf>,
     sentence: &str,
     format: &str,
+    n_heads: usize,
+    n_layers: usize,
+    d_model: usize,
     device: burn::backend::wgpu::WgpuDevice,
 ) -> Result<()> {
-    let config = Gpt2Config::default();
+    let config = Gpt2Config {
+        vocab_size: 50257,
+        max_seq_len: 1024,
+        d_model,
+        n_heads,
+        n_layers,
+        dropout: 0.1,
+    };
     let model = if let Some(path) = model_path {
         println!("Loading model from: {}", path.display());
         load_model::<Backend>(config, path, &device)?
@@ -228,9 +286,19 @@ async fn calculate_similarity(
     sentence1: &str,
     sentence2: &str,
     all_metrics: bool,
+    n_heads: usize,
+    n_layers: usize,
+    d_model: usize,
     device: burn::backend::wgpu::WgpuDevice,
 ) -> Result<()> {
-    let config = Gpt2Config::default();
+    let config = Gpt2Config {
+        vocab_size: 50257,
+        max_seq_len: 1024,
+        d_model,
+        n_heads,
+        n_layers,
+        dropout: 0.1,
+    };
     let model = if let Some(path) = model_path {
         println!("Loading model from: {}", path.display());
         load_model::<Backend>(config, path, &device)?
@@ -275,6 +343,9 @@ async fn train_model(
     loss_function: &str,
     _checkpoint_every: usize,
     resume_from: Option<&PathBuf>,
+    n_heads: usize,
+    n_layers: usize,
+    d_model: usize,
     device: burn::backend::wgpu::WgpuDevice,
 ) -> Result<()> {
     println!("🚀 Starting GPT-2 Embedding Model Training");
@@ -328,7 +399,14 @@ async fn train_model(
     };
 
     // Create or load model
-    let model_config = Gpt2Config::default();
+    let model_config = Gpt2Config {
+        vocab_size: 50257,
+        max_seq_len: 1024,
+        d_model,
+        n_heads,
+        n_layers,
+        dropout: 0.1,
+    };
     let model = if let Some(model_path) = resume_from {
         println!("Resuming training from: {}", model_path.display());
         load_model::<Backend>(model_config, model_path, &device)?

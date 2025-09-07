@@ -7,13 +7,13 @@ The CLI now supports training the model on TSV data containing sentence pairs an
 ### Basic Training Command
 
 ```bash
-gpt2-embedding train --train-data data_sets/train.tsv
+gptn-embedding train --train-data data_sets/train.tsv
 ```
 
 ### Full Training with Validation
 
 ```bash
-gpt2-embedding train \
+gptn-embedding train \
   --train-data data_sets/train.tsv \
   --validation-data data_sets/dev.tsv \
   --epochs 20 \
@@ -71,7 +71,7 @@ Where:
 ### Example Training Session
 
 ```bash
-$ gpt2-embedding train --train-data data_sets/train.tsv --validation-data data_sets/dev.tsv --epochs 5
+$ gptn-embedding train --train-data data_sets/train.tsv --validation-data data_sets/dev.tsv --epochs 5
 
 🚀 Starting GPT-2 Embedding Model Training
 ==========================================
@@ -115,7 +115,7 @@ Final model saved: checkpoints/final_model.bin
 To continue training from a checkpoint:
 
 ```bash
-gpt2-embedding train \
+gptn-embedding train \
   --train-data data_sets/train.tsv \
   --resume-from checkpoints/checkpoint_epoch_10.bin \
   --epochs 20

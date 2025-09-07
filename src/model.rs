@@ -28,8 +28,8 @@ impl Default for Gpt2Config {
             vocab_size: 50257, // GPT-2 vocabulary size
             max_seq_len: 1024, // Maximum sequence length
             d_model: 768,      // Embedding dimension
-            n_heads: 12,       // Number of attention heads
-            n_layers: 12,      // Number of transformer layers
+            n_heads: 4,        // Number of attention heads (reduced from 12)
+            n_layers: 4,       // Number of transformer layers (reduced from 12)
             dropout: 0.1,      // Dropout rate
         }
     }
@@ -479,7 +479,7 @@ mod tests {
     type TestBackend = Wgpu;
 
     #[test]
-    fn test_gpt2_model_creation() {
+    fn test_gpt_n_model_creation() {
         let device = Default::default();
         let config = Gpt2Config::default();
         let _model = Gpt2Model::<TestBackend>::new(config, &device);

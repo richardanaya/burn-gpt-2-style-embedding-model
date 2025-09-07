@@ -501,8 +501,8 @@ This final vector captures the semantic meaning of the entire sentence!
 
 ### Installation
 ```bash
-git clone https://github.com/richardanaya/burn-gpt2-embedding-model
-cd burn-gpt2-embedding-model
+git clone https://github.com/richardanaya/burn-gpt-n-embedding-model
+cd burn-gpt-n-embedding-model
 cargo build --release
 ```
 
