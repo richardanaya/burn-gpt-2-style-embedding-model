@@ -13,7 +13,7 @@ This model takes sentences as input and converts them into high-dimensional vect
 
 ## 🏗️ Architecture Overview
 
-This implementation follows the GPT-2 117M parameter configuration:
+This implementation follows the GPT-2 117M parameter configuration (but these parameters can be altered for experiments!):
 
 ```
 📊 Model Specifications:
