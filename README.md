@@ -1,4 +1,4 @@
-# GPT-2 Embedding Model in Rust 🦀
+# A flexible GPT-2 Embedding Model in Rust to Play with Training 🦀
 
 **An Educational Implementation of GPT-2 for Text Embeddings Using the Burn Deep Learning Framework**
 
