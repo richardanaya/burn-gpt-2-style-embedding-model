@@ -278,6 +278,90 @@ Rich 768-dimensional representation capturing:
 **The Magic of Attention:**
 Each head essentially asks: "For each word, which other words in the sentence are most important for understanding its meaning in this context?" The answers from all 12 heads combine to create a rich, contextual understanding that goes far beyond simple word-by-word processing.
 
+#### 🔧 How Head Results Get Merged Together
+
+After all 12 heads have processed the input in parallel, their outputs need to be combined before feeding into the rest of the transformer. Here's exactly how this works:
+
+**Step 1: Individual Head Outputs**
+Each head produces attention-weighted representations for each token:
+```
+Head 1 output: [token1: 64-dim vector, token2: 64-dim vector, ...]
+Head 2 output: [token1: 64-dim vector, token2: 64-dim vector, ...]
+...
+Head 12 output: [token1: 64-dim vector, token2: 64-dim vector, ...]
+```
+
+**Step 2: Concatenation**
+The outputs from all heads are concatenated (joined together) for each token:
+```
+For each token position:
+├── Head 1 output: [a₁, a₂, ..., a₆₄]    (64 dimensions)
+├── Head 2 output: [b₁, b₂, ..., b₆₄]    (64 dimensions)  
+├── Head 3 output: [c₁, c₂, ..., c₆₄]    (64 dimensions)
+│   ...
+└── Head 12 output: [l₁, l₂, ..., l₆₄]   (64 dimensions)
+                    ↓
+Concatenated: [a₁, a₂, ..., a₆₄, b₁, b₂, ..., b₆₄, c₁, ..., l₆₄]
+              └─────────────── 768 dimensions total ──────────────┘
+```
+
+**Step 3: Linear Projection**
+The concatenated 768-dimensional vector goes through a learned linear transformation:
+```rust
+// Pseudo-code representation
+multi_head_output = concatenate([head1, head2, ..., head12])  // Shape: [768]
+projected_output = linear_projection(multi_head_output)       // Shape: [768]
+```
+
+This linear projection (also called the "output projection") allows the model to:
+- **Blend Information**: Learn optimal combinations of different head outputs
+- **Reduce Redundancy**: Filter out redundant information between heads
+- **Maintain Dimensionality**: Keep 768 dimensions for the residual connection
+
+**Step 4: Residual Connection & Layer Norm**
+```
+Original input (768-dim)
+       +                    ← Residual connection (preserves original info)
+Projected multi-head output (768-dim)
+       ↓
+Layer Normalization         ← Stabilizes and normalizes the combined result
+       ↓
+Fed into Feed-Forward Network
+```
+
+**Visual Summary:**
+```
+Input: "The big red car"
+         ↓
+┌─────────────────────────────────────┐
+│    Multi-Head Attention Block       │
+│ ┌─────┐ ┌─────┐       ┌─────┐      │ Each head: 768→64 dims
+│ │Head1│ │Head2│  ...  │Head12│      │
+│ │64dim│ │64dim│       │64dim │      │
+│ └─────┘ └─────┘       └─────┘      │
+│     │       │           │          │
+│     └───────┼───────────┘          │ Concatenate: 12×64→768
+│             ↓                      │
+│    [768-dimensional vector]        │
+│             ↓                      │
+│    Linear Projection (768→768)     │ Learn optimal blending
+│             ↓                      │
+│    [768-dimensional output]        │
+└─────────────────────────────────────┘
+         ↓
+    + Residual + LayerNorm
+         ↓
+    Feed-Forward Network
+```
+
+**Why This Design Works:**
+- **Parallel Specialization**: Each head can focus on different patterns independently
+- **Information Preservation**: Concatenation keeps all specialized information
+- **Adaptive Combination**: Linear projection learns how to best combine head outputs
+- **Stable Training**: Residual connections prevent information loss during deep processing
+
+This merging process ensures that the rich, specialized understanding from all 12 attention heads is effectively combined and passed forward through the transformer, creating the powerful contextual representations that make transformers so effective at understanding language!
+
 #### Feed-Forward Network (MLP)
 - **Purpose**: Processes the attended information to extract patterns
 - **Architecture**: Linear → GELU activation → Linear → Dropout
