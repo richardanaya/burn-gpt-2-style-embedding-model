@@ -82,12 +82,12 @@ enum Commands {
         #[arg(long)]
         resume_from: Option<PathBuf>,
         
-        /// Number of attention heads (default: 1)
-        #[arg(long, default_value = "1")]
+        /// Number of attention heads (default: 12)
+        #[arg(long, default_value = "12")]
         n_heads: usize,
         
-        /// Number of transformer layers (default: 1)
-        #[arg(long, default_value = "1")]
+        /// Number of transformer layers (default: 12)
+        #[arg(long, default_value = "12")]
         n_layers: usize,
         
         /// Embedding dimension size (default: 768)
