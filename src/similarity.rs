@@ -147,25 +147,60 @@ impl<B: Backend<FloatElem = f32>> SimilarityCalculator<B> {
         })
     }
 
-    /// Get embedding for a single sentence
+    /// Get embedding for a single sentence using mean pooling of final layer representations
+    /// 
+    /// This method demonstrates the complete pipeline from text to semantic embedding:
+    /// 
+    /// 1. **Tokenization**: Convert text to token IDs that the model can process
+    /// 2. **Model Forward Pass**: Process through all 12 transformer layers
+    /// 3. **Mean Pooling**: Average final layer token embeddings to get sentence representation
+    /// 
+    /// ## Why This Approach Works Well
+    /// 
+    /// **Final Layer + Mean Pooling = Robust Semantic Embeddings**
+    /// 
+    /// - **Final Layer**: Provides semantically rich, contextually aware token representations
+    /// - **Mean Pooling**: Combines these rich representations into a stable sentence-level vector
+    /// - **Result**: Embeddings that capture sentence meaning while being robust to variation
+    /// 
+    /// **Example of the Process:**
+    /// ```
+    /// Input: "The happy cat is sleeping peacefully"
+    /// 
+    /// After Final Transformer Layer:
+    /// "The":        [0.12, -0.34, 0.67, ...]  ← Semantically processed
+    /// "happy":      [0.89, 0.23, -0.15, ...]  ← Understands positive emotion
+    /// "cat":        [0.45, -0.12, 0.78, ...]  ← Knows it's an animal
+    /// "is":         [0.01, 0.05, -0.02, ...]  ← Minimal semantic content
+    /// "sleeping":   [0.34, 0.56, 0.21, ...]  ← Understands action/state
+    /// "peacefully": [0.67, 0.43, -0.08, ...] ← Understands manner/emotion
+    /// 
+    /// Mean Pooled Result:
+    /// [(0.12+0.89+0.45+0.01+0.34+0.67)/6, (-0.34+0.23-0.12+0.05+0.56+0.43)/6, ...]
+    /// = [0.41, 0.135, ...]  ← Balanced representation of entire sentence
+    /// ```
+    /// 
+    /// The resulting embedding captures the overall semantic content: a peaceful, 
+    /// positive scene involving an animal at rest.
     fn get_sentence_embedding(&self, sentence: &str) -> Result<Tensor<B, 1>> {
-        // Tokenize the sentence
+        // Tokenize the sentence: Convert human text to token IDs
         let token_ids = self.tokenizer.encode(sentence, true)?;
         
         // Get a device from one of the model's parameters
         let device = &self.model.token_embedding.weight.device();
         
-        // Convert to tensor and add batch dimension
+        // Convert to tensor and add batch dimension for model processing
         let input_tensor = Tensor::<B, 1, Int>::from_data(
             TensorData::from(&token_ids.iter().map(|&x| x as i64).collect::<Vec<_>>()[..]),
             device,
         ).unsqueeze_dim(0);
 
-        // Get sentence embedding (average of token embeddings)
+        // Get sentence embedding: This calls model.forward() internally to process through
+        // all 12 transformer layers, then applies mean pooling to get a single sentence vector
         let sentence_embedding = self.model.get_sentence_embedding(input_tensor);
         let sentence_embedding: Tensor<B, 2> = sentence_embedding.squeeze_dims(&[1]); // Remove seq dimension 
         
-        // Remove batch dimension
+        // Remove batch dimension to get final sentence embedding vector
         let result: Tensor<B, 1> = sentence_embedding.squeeze_dims(&[0]);
         Ok(result)
     }

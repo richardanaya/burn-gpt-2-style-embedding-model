@@ -375,7 +375,91 @@ Compares embeddings using various mathematical approaches:
 - **Manhattan Distance**: Sum of absolute differences
 - **Dot Product**: Raw similarity measure for normalized vectors
 
-### 4. 💾 Training Utilities (`src/training.rs`)
+### 4. 📚 Embedding Strategy: Mean Pooling from Final Layer
+
+This implementation uses a specific strategy for creating sentence embeddings that's worth understanding in detail:
+
+#### 🎯 Mean Pooling Explained
+
+**What is Mean Pooling?**
+Mean pooling converts variable-length sequences of token embeddings into fixed-size sentence representations by averaging:
+
+```
+Input sentence: "The cat sleeps"
+Token embeddings from final layer:
+├── "The":    [0.1, -0.2, 0.3, ...] (768 dims)
+├── "cat":    [0.5, 0.1, -0.1, ...] (768 dims)  
+└── "sleeps": [-0.2, 0.4, 0.2, ...] (768 dims)
+
+Mean pooled result:
+[(0.1+0.5-0.2)/3, (-0.2+0.1+0.4)/3, (0.3-0.1+0.2)/3, ...]
+= [0.133, 0.1, 0.133, ...] (768 dims)
+```
+
+**Why Mean Pooling?**
+- ✅ **Simplicity**: Easy to understand and implement
+- ✅ **Robustness**: Works across different sentence lengths
+- ✅ **No Training**: Requires no additional parameters
+- ✅ **Stable**: Less sensitive to outlier tokens
+- ⚠️ **Equal Weighting**: Treats all words equally (pro and con)
+
+#### 🏗️ Why Final Layer vs Earlier Layers?
+
+**Transformer Layers Build Progressive Understanding:**
+
+```
+Layer 1-3:   Basic syntax, part-of-speech, local word relationships
+    ↓
+Layer 4-8:   Complex grammar, named entities, coreference  
+    ↓  
+Layer 9-12:  Semantic meaning, context, abstract concepts
+    ↓
+Final Output: Rich semantic embeddings perfect for similarity
+```
+
+**Example: "The bank by the river was steep"**
+
+- **Early Layers (1-3)**: Might mix financial and geographical meanings of "bank"
+- **Middle Layers (4-8)**: Start to resolve meaning from nearby context words
+- **Final Layers (9-12)**: Fully understand "bank" means riverbank from complete context
+
+**Research Evidence:**
+- Studies show semantic information peaks in final layers
+- Sentence similarity tasks perform best with layers 10-12
+- Earlier layers capture syntax; later layers capture meaning
+
+#### 🔄 Alternative Approaches We Could Use
+
+**Different Pooling Strategies:**
+```rust
+// Max Pooling: Take maximum value for each dimension
+embeddings.max_dim(1)  // Captures strongest signals
+
+// CLS Token (BERT-style): Use special classification token  
+embeddings.narrow(1, 0, 1)  // Take first token embedding
+
+// Attention Pooling: Learn which tokens are most important
+attention_weights * embeddings  // Requires training
+```
+
+**Different Layer Strategies:**
+```rust
+// Multi-layer combination: Use multiple layers
+concat([layer9, layer10, layer11, layer12])
+
+// Weighted layers: Learn optimal layer combination  
+w1*layer9 + w2*layer10 + w3*layer11 + w4*layer12
+```
+
+**Why We Chose Final Layer + Mean Pooling:**
+1. **Educational Clarity**: Easy to understand and explain
+2. **Strong Baseline**: Proven effective across many tasks
+3. **No Extra Training**: Works with any transformer model
+4. **Research Foundation**: Widely used in academic work
+
+This combination gives us embeddings that capture semantic meaning while being simple enough to understand and modify for learning purposes!
+
+### 5. 💾 Training Utilities (`src/training.rs`)
 Handles loading and saving model weights in efficient binary format.
 
 ## 🔄 How It Works: From Text to Embeddings
