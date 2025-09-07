@@ -1,6 +1,4 @@
-# GPT-2 Embedding Model in Rust 🦀
-
-**An Educational Implementation of GPT-2 for Text Embeddings Using the Burn Deep Learning Framework**
+# A GPT-2-like Embedding Model in Rust to Play with Training 🦀
 
 This project implements a GPT-2 style transformer model for generating text embeddings, built from scratch in Rust using the [Burn](https://github.com/tracel-ai/burn) deep learning framework with WebGPU backend. It's designed as a learning resource for understanding transformer architecture and text embeddings.
 
@@ -15,7 +13,7 @@ This model takes sentences as input and converts them into high-dimensional vect
 
 ## 🏗️ Architecture Overview
 
-This implementation follows the GPT-2 117M parameter configuration:
+This implementation follows the GPT-2 117M parameter configuration (but these parameters can be altered for experiments!):
 
 ```
 📊 Model Specifications:
