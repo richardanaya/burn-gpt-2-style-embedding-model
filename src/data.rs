@@ -88,6 +88,13 @@ impl Dataset {
         self.examples.chunks(batch_size).collect()
     }
 
+    /// Limit the dataset to the first N examples (for testing)
+    pub fn limit(&mut self, max_examples: usize) {
+        if max_examples > 0 && max_examples < self.examples.len() {
+            self.examples.truncate(max_examples);
+        }
+    }
+
     /// Get statistics about the dataset
     pub fn statistics(&self) -> DatasetStats {
         let total = self.examples.len();

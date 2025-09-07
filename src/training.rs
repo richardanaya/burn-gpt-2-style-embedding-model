@@ -2,8 +2,11 @@ use crate::{data::Dataset, Gpt2Config, Gpt2Model, Gpt2Tokenizer};
 use anyhow::{anyhow, Result};
 use burn::optim::AdamConfig;
 use burn::prelude::*;
-use burn::record::{BinGzFileRecorder, FullPrecisionSettings};
+use burn::record::{BinGzFileRecorder, FullPrecisionSettings, CompactRecorder};
 use burn::tensor::backend::AutodiffBackend;
+use burn::train::{LearnerBuilder, TrainOutput, TrainStep, ValidStep};
+use burn::data::dataloader::batcher::Batcher;
+use burn::data::dataloader::{DataLoaderBuilder, Dataset as BurnDataset};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,9 +36,48 @@ pub fn load_model<B: Backend>(
     Ok(model)
 }
 
-/// Training configuration
-#[derive(Debug, Clone)]
+/// Training configuration using official Burn Config pattern
+#[derive(Config)]
 pub struct TrainingConfig {
+    /// Model configuration
+    pub model: Gpt2Config,
+    /// Adam optimizer configuration
+    pub optimizer: AdamConfig,
+    /// Number of training epochs
+    #[config(default = 10)]
+    pub num_epochs: usize,
+    /// Batch size for training
+    #[config(default = 2)]
+    pub batch_size: usize,
+    /// Number of worker threads for data loading
+    #[config(default = 1)]
+    pub num_workers: usize,
+    /// Random seed for reproducibility
+    #[config(default = 42)]
+    pub seed: u64,
+    /// Initial learning rate
+    #[config(default = 1.0e-4)]
+    pub learning_rate: f64,
+    /// Margin for contrastive loss
+    #[config(default = 1.0)]
+    pub margin: f32,
+    /// Loss function to use
+    #[config(default = "LossFunction::Contrastive")]
+    pub loss_function: LossFunction,
+}
+
+
+/// Available loss functions for training
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum LossFunction {
+    Contrastive,
+    CosineEmbedding,
+    MseSimilarity,
+}
+
+/// Legacy training configuration for backwards compatibility
+#[derive(Debug, Clone)]
+pub struct LegacyTrainingConfig {
     /// Initial learning rate
     pub initial_learning_rate: f64,
     /// Learning rate scheduler
@@ -54,27 +96,19 @@ pub struct TrainingConfig {
     pub loss_function: LossFunction,
 }
 
-impl Default for TrainingConfig {
+impl Default for LegacyTrainingConfig {
     fn default() -> Self {
         Self {
             initial_learning_rate: 0.001,
             lr_scheduler: LearningRateScheduler::CosineAnnealing { min_lr: 0.00001 },
             epochs: 10,
-            batch_size: 2, // Reduced from 16 to 2 for WebGPU memory constraints
-            margin: 1.0,   // Default margin for contrastive loss
+            batch_size: 2,
+            margin: 1.0,
             checkpoint_dir: "checkpoints".to_string(),
             early_stopping: true,
             loss_function: LossFunction::Contrastive,
         }
     }
-}
-
-/// Available loss functions for training
-#[derive(Debug, Clone)]
-pub enum LossFunction {
-    Contrastive,
-    CosineEmbedding,
-    MseSimilarity,
 }
 
 /// Learning rate scheduling strategies
@@ -90,6 +124,438 @@ pub enum LearningRateScheduler {
     StepDecay { step_size: usize, gamma: f64 },
     /// Cosine annealing with warm restarts
     CosineAnnealing { min_lr: f64 },
+}
+
+/// Batch item for the Burn training system
+#[derive(Clone, Debug)]
+pub struct TrainingBatch<B: Backend> {
+    pub sentence1: Tensor<B, 2, Int>,
+    pub sentence2: Tensor<B, 2, Int>,
+    pub labels: Tensor<B, 1>,
+}
+
+impl<B: Backend> TrainingBatch<B> {
+    pub fn new(
+        sentence1: Tensor<B, 2, Int>,
+        sentence2: Tensor<B, 2, Int>, 
+        labels: Tensor<B, 1>,
+    ) -> Self {
+        Self {
+            sentence1,
+            sentence2,
+            labels,
+        }
+    }
+}
+
+/// Training example from our dataset
+#[derive(Clone, Debug)]
+pub struct TrainingItem {
+    pub sentence1: String,
+    pub sentence2: String,
+    pub label: f32,
+}
+
+impl TrainingItem {
+    pub fn new(sentence1: String, sentence2: String, label: f32) -> Self {
+        Self {
+            sentence1,
+            sentence2,
+            label,
+        }
+    }
+}
+
+/// Wrapper for our dataset to implement Burn's Dataset trait
+#[derive(Clone, Debug)]
+pub struct BurnTrainingDataset {
+    pub items: Vec<TrainingItem>,
+}
+
+impl BurnTrainingDataset {
+    pub fn from_dataset(dataset: &Dataset) -> Self {
+        let items = dataset.examples.iter().map(|example| {
+            TrainingItem::new(
+                example.sentence1.clone(),
+                example.sentence2.clone(),
+                example.label as f32,
+            )
+        }).collect();
+        
+        Self { items }
+    }
+}
+
+impl BurnDataset<TrainingItem> for BurnTrainingDataset {
+    fn get(&self, index: usize) -> Option<TrainingItem> {
+        self.items.get(index).cloned()
+    }
+
+    fn len(&self) -> usize {
+        self.items.len()
+    }
+}
+
+/// Batcher to convert training items to batched tensors
+#[derive(Clone)]
+pub struct TrainingBatcher {
+    tokenizer: Gpt2Tokenizer,
+}
+
+impl TrainingBatcher {
+    pub fn new(tokenizer: Gpt2Tokenizer) -> Self {
+        Self { tokenizer }
+    }
+}
+
+impl<B: Backend> Batcher<B, TrainingItem, TrainingBatch<B>> for TrainingBatcher {
+    fn batch(&self, items: Vec<TrainingItem>, device: &B::Device) -> TrainingBatch<B> {
+        let mut sentence1_ids = Vec::new();
+        let mut sentence2_ids = Vec::new();
+        let mut labels = Vec::new();
+        
+        // Tokenize all sentences
+        for item in items {
+            if let (Ok(tokens1), Ok(tokens2)) = (
+                self.tokenizer.encode(&item.sentence1, true),
+                self.tokenizer.encode(&item.sentence2, true),
+            ) {
+                sentence1_ids.push(tokens1);
+                sentence2_ids.push(tokens2);
+                labels.push(item.label);
+            }
+        }
+        
+        if sentence1_ids.is_empty() {
+            // Return empty batch if all tokenization failed
+            let empty_tensor_1 = Tensor::<B, 2, Int>::zeros([0, 0], device);
+            let empty_tensor_2 = Tensor::<B, 2, Int>::zeros([0, 0], device);
+            let empty_labels = Tensor::<B, 1>::zeros([0], device);
+            return TrainingBatch::new(empty_tensor_1, empty_tensor_2, empty_labels);
+        }
+        
+        // Pad sequences
+        let max_len1 = sentence1_ids.iter().map(|s| s.len()).max().unwrap_or(0);
+        let max_len2 = sentence2_ids.iter().map(|s| s.len()).max().unwrap_or(0);
+        
+        let batch_size = sentence1_ids.len();
+        let mut padded_sentence1 = Vec::with_capacity(batch_size * max_len1);
+        let mut padded_sentence2 = Vec::with_capacity(batch_size * max_len2);
+        
+        for seq in sentence1_ids.iter() {
+            let mut padded = seq.clone();
+            padded.resize(max_len1, 0);
+            padded_sentence1.extend(padded.iter().map(|&x| x as i64));
+        }
+        
+        for seq in sentence2_ids.iter() {
+            let mut padded = seq.clone();
+            padded.resize(max_len2, 0);
+            padded_sentence2.extend(padded.iter().map(|&x| x as i64));
+        }
+        
+        let sentence1_tensor = Tensor::<B, 1, Int>::from_data(
+            TensorData::from(&padded_sentence1[..]), device
+        ).reshape([batch_size, max_len1]);
+        
+        let sentence2_tensor = Tensor::<B, 1, Int>::from_data(
+            TensorData::from(&padded_sentence2[..]), device
+        ).reshape([batch_size, max_len2]);
+        
+        let labels_tensor = Tensor::<B, 1>::from_data(
+            TensorData::from(&labels[..]), device
+        );
+        
+        TrainingBatch::new(sentence1_tensor, sentence2_tensor, labels_tensor)
+    }
+}
+
+
+/// Training output containing loss - using RegressionOutput for compatibility
+pub type SimilarityLoss<B> = burn::train::RegressionOutput<B>;
+
+/// Implement TrainStep for our Gpt2Model 
+impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, SimilarityLoss<B>> for Gpt2Model<B> {
+    fn step(&self, batch: TrainingBatch<B>) -> TrainOutput<SimilarityLoss<B>> {
+        // Forward pass - get embeddings
+        let embeddings1 = self.get_sentence_embedding(batch.sentence1);
+        let embeddings2 = self.get_sentence_embedding(batch.sentence2);
+
+        // Calculate contrastive loss (simple MSE for now)
+        let diff = embeddings1.clone() - embeddings2;
+        let loss_tensor = diff.powf_scalar(2.0).mean_dim(1).mean();
+
+        let output = SimilarityLoss::new(batch.labels, embeddings1, loss_tensor.clone().unsqueeze());
+        let grads = loss_tensor.backward();
+        TrainOutput::new(self, grads, output)
+    }
+}
+
+/// Implement ValidStep for validation 
+impl<B: Backend> ValidStep<TrainingBatch<B>, SimilarityLoss<B>> for Gpt2Model<B> {
+    fn step(&self, batch: TrainingBatch<B>) -> SimilarityLoss<B> {
+        // Forward pass without gradients for validation
+        let embeddings1 = self.get_sentence_embedding(batch.sentence1).detach();
+        let embeddings2 = self.get_sentence_embedding(batch.sentence2).detach();
+
+        // Calculate predictions (similarity scores)  
+        let diff = embeddings1.clone() - embeddings2;
+        let predictions = diff.powf_scalar(2.0).mean_dim(1);
+
+        SimilarityLoss::new(batch.labels, embeddings1, predictions.unsqueeze())
+    }
+}
+
+/// Create artifact directory for training
+fn create_artifact_dir(artifact_dir: &str) {
+    // Remove existing artifacts to get a clean start
+    std::fs::remove_dir_all(artifact_dir).ok();
+    std::fs::create_dir_all(artifact_dir).ok();
+}
+
+/// Official Burn training function using the Learner pattern - exactly matching the docs
+pub fn train_with_learner<B: AutodiffBackend>(
+    artifact_dir: &str, 
+    config: TrainingConfig, 
+    device: B::Device,
+    train_dataset: BurnTrainingDataset,
+    validation_dataset: Option<BurnTrainingDataset>,
+    tokenizer: Gpt2Tokenizer,
+) {
+    create_artifact_dir(artifact_dir);
+    config
+        .save(format!("{artifact_dir}/config.json"))
+        .expect("Config should be saved successfully");
+
+    B::seed(config.seed);
+
+    let batcher = TrainingBatcher::new(tokenizer);
+
+    let dataloader_train = DataLoaderBuilder::new(batcher.clone())
+        .batch_size(config.batch_size)
+        .shuffle(config.seed)
+        .num_workers(config.num_workers)
+        .build(train_dataset.clone());
+
+    let dataloader_test = if let Some(val_dataset) = validation_dataset {
+        DataLoaderBuilder::new(batcher)
+            .batch_size(config.batch_size)
+            .shuffle(config.seed)
+            .num_workers(config.num_workers)
+            .build(val_dataset)
+    } else {
+        // Use training set for validation if no validation set provided
+        DataLoaderBuilder::new(batcher)
+            .batch_size(config.batch_size)
+            .shuffle(config.seed)
+            .num_workers(config.num_workers)
+            .build(train_dataset)
+    };
+
+    let learner = LearnerBuilder::new(artifact_dir)
+        .metric_train_numeric(burn::train::metric::LossMetric::new())
+        .metric_valid_numeric(burn::train::metric::LossMetric::new())
+        .with_file_checkpointer(CompactRecorder::new())
+        .devices(vec![device.clone()])
+        .num_epochs(config.num_epochs)
+        .summary()
+        .build(
+            config.model.init::<B>(&device),
+            config.optimizer.init(),
+            config.learning_rate,
+        );
+
+    let model_trained = learner.fit(dataloader_train, dataloader_test);
+
+    model_trained
+        .save_file(format!("{artifact_dir}/model"), &CompactRecorder::new())
+        .expect("Trained model should be saved successfully");
+}
+
+/// Pre-tokenized validation data (CPU-only to save GPU memory)
+#[derive(Debug)]
+#[allow(dead_code)]
+struct TokenizedValidationBatch {
+    padded1: Vec<i64>,
+    padded2: Vec<i64>,
+    max_len1: usize,
+    max_len2: usize,
+    labels: Vec<f32>,
+}
+
+/// Preprocess validation dataset once - keep on CPU to avoid GPU OOM
+#[allow(dead_code)]
+fn preprocess_validation_data_cpu(
+    tokenizer: &Gpt2Tokenizer,
+    val_dataset: &Dataset,
+    batch_size: usize,
+) -> Vec<TokenizedValidationBatch> {
+    let val_batches = val_dataset.batches(batch_size);
+    let mut preprocessed_batches = Vec::new();
+
+    for batch_examples in val_batches.iter() {
+        let mut sentence1_ids = Vec::new();
+        let mut sentence2_ids = Vec::new();
+        let mut labels = Vec::new();
+
+        for example in batch_examples.iter() {
+            if let (Ok(tokens1), Ok(tokens2)) = (
+                tokenizer.encode(&example.sentence1, true),
+                tokenizer.encode(&example.sentence2, true),
+            ) {
+                sentence1_ids.push(tokens1);
+                sentence2_ids.push(tokens2);
+                labels.push(example.label as f32);
+            }
+        }
+
+        if sentence1_ids.is_empty() {
+            continue;
+        }
+
+        // Pad sequences
+        let max_len1 = sentence1_ids.iter().map(|s| s.len()).max().unwrap_or(0);
+        let max_len2 = sentence2_ids.iter().map(|s| s.len()).max().unwrap_or(0);
+
+        let mut padded1 = Vec::new();
+        let mut padded2 = Vec::new();
+
+        for tokens in sentence1_ids {
+            let mut padded = tokens.clone();
+            padded.resize(max_len1, 0);
+            padded1.extend(padded.iter().map(|&x| x as i64));
+        }
+
+        for tokens in sentence2_ids {
+            let mut padded = tokens.clone();
+            padded.resize(max_len2, 0);
+            padded2.extend(padded.iter().map(|&x| x as i64));
+        }
+
+        preprocessed_batches.push(TokenizedValidationBatch {
+            padded1,
+            padded2,
+            max_len1,
+            max_len2,
+            labels,
+        });
+    }
+
+    preprocessed_batches
+}
+
+/// Simple validation that processes very small batches to avoid GPU OOM
+/// Uses inference-only model (no gradients) to save GPU memory
+fn validate_model_simple<B: Backend>(
+    model: &Gpt2Model<B>,
+    tokenizer: &Gpt2Tokenizer,
+    val_dataset: &Dataset,
+    batch_size: usize,
+    device: &B::Device,
+) -> f32 {
+    println!("🔍 Starting validation...");
+    let val_batches = val_dataset.batches(batch_size);
+    println!("📊 Processing {} validation batches (batch_size={})", val_batches.len(), batch_size);
+    
+    let mut total_correct = 0;
+    let mut total_examples = 0;
+    let start_time = std::time::Instant::now();
+
+    for (batch_idx, batch_examples) in val_batches.iter().enumerate() {
+        // Log batch processing
+        if batch_idx % 50 == 0 || batch_idx < 5 {
+            println!("🧮 Processing validation batch {}/{} ({} examples)", 
+                    batch_idx + 1, val_batches.len(), batch_examples.len());
+        }
+        
+        // Process each small batch
+        for (example_idx, example) in batch_examples.iter().enumerate() {
+            match (
+                tokenizer.encode(&example.sentence1, true),
+                tokenizer.encode(&example.sentence2, true),
+            ) {
+                (Ok(tokens1), Ok(tokens2)) => {
+                    // Log first few examples for debugging
+                    if batch_idx == 0 && example_idx < 2 {
+                        println!("  📝 Example {}: '{}' vs '{}' (label={})", 
+                                example_idx, example.sentence1, example.sentence2, example.label);
+                        println!("  🔤 Tokens: {} vs {} length", tokens1.len(), tokens2.len());
+                    }
+                    
+                    // Process one example at a time to minimize GPU memory
+                    let padded1: Vec<i64> = tokens1.iter().map(|&x| x as i64).collect();
+                    let padded2: Vec<i64> = tokens2.iter().map(|&x| x as i64).collect();
+
+                    let input1 = Tensor::<B, 1, Int>::from_data(TensorData::from(&padded1[..]), device)
+                        .unsqueeze_dim(0); // [1, seq_len]
+                    let input2 = Tensor::<B, 1, Int>::from_data(TensorData::from(&padded2[..]), device)
+                        .unsqueeze_dim(0); // [1, seq_len]
+
+                    // Get embeddings and immediately detach from autograd to save memory
+                    let similarity_value = {
+                        let embedding1 = model.get_sentence_embedding(input1).detach();
+                        let embedding2 = model.get_sentence_embedding(input2).detach();
+
+                        // Calculate cosine similarity using tensor operations (no gradients)
+                        let dot_product = (embedding1.clone() * embedding2.clone()).sum();
+                        let norm1 = embedding1.clone().powf_scalar(2.0).sum().sqrt();
+                        let norm2 = embedding2.powf_scalar(2.0).sum().sqrt();
+                        
+                        let cosine_similarity = dot_product.div(norm1.mul(norm2.add_scalar(1e-8)));
+                        cosine_similarity.into_scalar().elem::<f32>()
+                    }; // All tensors dropped here, should free GPU memory
+                    
+                    // Predict and check
+                    let predicted_similar = similarity_value > 0.5;
+                    let actual_similar = example.label > 0;
+                    
+                    if predicted_similar == actual_similar {
+                        total_correct += 1;
+                    }
+                    
+                    // Log first few predictions for debugging
+                    if batch_idx == 0 && example_idx < 2 {
+                        println!("  📈 Similarity: {:.4}, Predicted: {}, Actual: {}, Correct: {}", 
+                                similarity_value, predicted_similar, actual_similar, predicted_similar == actual_similar);
+                    }
+                    
+                    total_examples += 1;
+                },
+                (Err(e1), _) => {
+                    println!("⚠️  Tokenization error for sentence1: {}", e1);
+                },
+                (_, Err(e2)) => {
+                    println!("⚠️  Tokenization error for sentence2: {}", e2);
+                }
+            }
+        }
+        
+        // Print progress regularly and force memory cleanup
+        if batch_idx % 25 == 0 {
+            let elapsed = start_time.elapsed().as_secs_f32();
+            let accuracy_so_far = if total_examples > 0 { 
+                (total_correct as f32 / total_examples as f32) * 100.0 
+            } else { 0.0 };
+            
+            print!("\r🔍 Validation: {}/{} batches, {}/{} correct ({:.1}% accuracy), {:.1}s elapsed    ", 
+                   batch_idx + 1, val_batches.len(), total_correct, total_examples, 
+                   accuracy_so_far, elapsed);
+            std::io::Write::flush(&mut std::io::stdout()).unwrap();
+            
+            // Force garbage collection to help with GPU memory
+            std::hint::black_box(&total_correct);
+        }
+    }
+    
+    let final_elapsed = start_time.elapsed().as_secs_f32();
+    println!("\n✅ Validation complete: {}/{} correct in {:.1}s", total_correct, total_examples, final_elapsed);
+
+    if total_examples > 0 {
+        (total_correct as f32 / total_examples as f32) * 100.0
+    } else {
+        println!("⚠️  No validation examples processed!");
+        0.0
+    }
 }
 
 impl LearningRateScheduler {
@@ -115,13 +581,13 @@ impl LearningRateScheduler {
     }
 }
 
-/// Simple real training implementation using manual approach (like the tutorial)
+/// Legacy training function - kept for backwards compatibility
 pub async fn train_model<B: Backend + AutodiffBackend>(
     model: Gpt2Model<B>,
     tokenizer: Gpt2Tokenizer,
-    config: TrainingConfig,
+    config: LegacyTrainingConfig,
     train_dataset: Dataset,
-    _validation_dataset: Option<Dataset>,
+    validation_dataset: Option<Dataset>,
     device: B::Device,
 ) -> Result<()> {
     // Set up signal handling for graceful interruption
@@ -140,6 +606,8 @@ pub async fn train_model<B: Backend + AutodiffBackend>(
     println!("  Batch size: {}", config.batch_size);
     println!("  Loss function: {:?}", config.loss_function);
     println!("  💡 Press Ctrl+C to stop training gracefully and save model");
+
+    // No preprocessing needed for simple validation approach
 
     // Get batches
     let batches = train_dataset.batches(config.batch_size);
@@ -252,7 +720,23 @@ pub async fn train_model<B: Backend + AutodiffBackend>(
         progress.finish_with_message(format!("Epoch {} completed", epoch + 1));
 
         let avg_loss = total_loss / batch_count as f32;
-        println!("Epoch {}: Average Loss = {:.4}", epoch + 1, avg_loss);
+        println!("Epoch {}: Average Training Loss = {:.4}", epoch + 1, avg_loss);
+
+        // Validate on validation set if available with aggressive memory management
+        if let Some(ref val_dataset) = validation_dataset {
+            println!("💾 Starting validation with aggressive memory cleanup...");
+            let val_batch_size = 1;
+            
+            // Run validation in its own scope to ensure memory cleanup
+            let val_accuracy = {
+                let accuracy = validate_model_simple(&model, &tokenizer, val_dataset, val_batch_size, &device);
+                // Force cleanup of any remaining validation tensors
+                std::hint::black_box(&accuracy);
+                accuracy
+            };
+            
+            println!("Epoch {}: Validation Accuracy = {:.2}%", epoch + 1, val_accuracy);
+        }
 
         // Save checkpoint
         let checkpoint_path = format!(

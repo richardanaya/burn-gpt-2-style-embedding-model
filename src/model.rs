@@ -35,6 +35,13 @@ impl Default for Gpt2Config {
     }
 }
 
+impl Gpt2Config {
+    /// Initialize the model from config
+    pub fn init<B: Backend>(&self, device: &B::Device) -> Gpt2Model<B> {
+        Gpt2Model::new(self.clone(), device)
+    }
+}
+
 /// Multi-layer perceptron (feed-forward network) used in transformer blocks
 #[derive(Module, Debug)]
 pub struct Mlp<B: Backend> {

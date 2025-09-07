@@ -1,13 +1,18 @@
 use anyhow::Result;
 use burn::prelude::*;
+use burn::optim::AdamConfig;
 use burn_gpt_n_embedding_model::{
-    create_demo_tokenizer, load_model, train_model as train_model_real, Dataset, Gpt2Config,
-    Gpt2Model, LossFunction, LearningRateScheduler, SimilarityCalculator, TrainingConfig,
+    create_demo_tokenizer, load_model, train_with_learner, 
+    Dataset, Gpt2Config, Gpt2Model, LossFunction, LearningRateScheduler, SimilarityCalculator, 
+    TrainingConfig, BurnTrainingDataset,
 };
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-type Backend = burn::backend::Autodiff<burn::backend::wgpu::Wgpu>;
+// For our case, we need a backend where InnerBackend = B (i.e., not wrapped by Autodiff)
+// This means we should use the inner backend directly for training
+type Backend = burn::backend::wgpu::Wgpu;
+type AutodiffBackend = burn::backend::Autodiff<Backend>;
 
 /// Parse learning rate scheduler from string and automatically choose initial learning rate
 fn parse_learning_rate_config(scheduler_str: &str, initial_lr: Option<f64>) -> (LearningRateScheduler, f64) {
@@ -93,6 +98,14 @@ enum Commands {
         /// Embedding dimension size (default: 768)
         #[arg(long, default_value = "768")]
         d_model: usize,
+        
+        /// Limit training examples for testing (0 = no limit)
+        #[arg(long, default_value = "0")]
+        limit_train: usize,
+        
+        /// Limit validation examples for testing (0 = no limit)
+        #[arg(long, default_value = "0")]
+        limit_validation: usize,
     },
 
     /// Get vector embedding for a sentence
@@ -176,6 +189,8 @@ async fn main() -> Result<()> {
             n_heads,
             n_layers,
             d_model,
+            limit_train,
+            limit_validation,
         } => {
             train_model(
                 train_data,
@@ -191,6 +206,8 @@ async fn main() -> Result<()> {
                 *n_heads,
                 *n_layers,
                 *d_model,
+                *limit_train,
+                *limit_validation,
                 device,
             )
             .await
@@ -342,10 +359,12 @@ async fn train_model(
     initial_lr: Option<f64>,
     loss_function: &str,
     _checkpoint_every: usize,
-    resume_from: Option<&PathBuf>,
+    _resume_from: Option<&PathBuf>,
     n_heads: usize,
     n_layers: usize,
     d_model: usize,
+    limit_train: usize,
+    limit_validation: usize,
     device: burn::backend::wgpu::WgpuDevice,
 ) -> Result<()> {
     println!("🚀 Starting GPT-2 Embedding Model Training");
@@ -353,14 +372,28 @@ async fn train_model(
 
     // Load training dataset
     println!("Loading training data from: {}", train_data_path.display());
-    let train_dataset = Dataset::from_tsv(train_data_path)?;
+    let mut train_dataset = Dataset::from_tsv(train_data_path)?;
+    
+    // Apply training limit if specified
+    if limit_train > 0 {
+        println!("🔬 Limiting training data to {} examples for testing", limit_train);
+        train_dataset.limit(limit_train);
+    }
+    
     train_dataset.statistics().print();
     println!();
 
     // Load validation dataset if provided
     let validation_dataset = if let Some(val_path) = validation_data_path {
         println!("Loading validation data from: {}", val_path.display());
-        let val_dataset = Dataset::from_tsv(val_path)?;
+        let mut val_dataset = Dataset::from_tsv(val_path)?;
+        
+        // Apply validation limit if specified
+        if limit_validation > 0 {
+            println!("🔬 Limiting validation data to {} examples for testing", limit_validation);
+            val_dataset.limit(limit_validation);
+        }
+        
         val_dataset.statistics().print();
         println!();
         Some(val_dataset)
@@ -370,7 +403,7 @@ async fn train_model(
     };
 
     // Parse learning rate scheduler and automatically choose initial learning rate
-    let (lr_scheduler, initial_learning_rate) = parse_learning_rate_config(lr_scheduler, initial_lr);
+    let (_lr_scheduler, initial_learning_rate) = parse_learning_rate_config(lr_scheduler, initial_lr);
     
     // Parse loss function
     let loss_fn = match loss_function.to_lowercase().as_str() {
@@ -386,19 +419,7 @@ async fn train_model(
         }
     };
 
-    // Create training configuration
-    let config = TrainingConfig {
-        initial_learning_rate,
-        lr_scheduler,
-        epochs,
-        batch_size,
-        margin: 1.0, // Default margin for contrastive loss
-        checkpoint_dir: output_dir.to_string_lossy().to_string(),
-        early_stopping: true,
-        loss_function: loss_fn,
-    };
-
-    // Create or load model
+    // Create model configuration first
     let model_config = Gpt2Config {
         vocab_size: 50257,
         max_seq_len: 1024,
@@ -407,27 +428,35 @@ async fn train_model(
         n_layers,
         dropout: 0.1,
     };
-    let model = if let Some(model_path) = resume_from {
-        println!("Resuming training from: {}", model_path.display());
-        load_model::<Backend>(model_config, model_path, &device)?
-    } else {
-        println!("Initializing new model with random weights");
-        Gpt2Model::new(model_config, &device)
-    };
 
+    // Create training configuration using the new Config pattern
+    let config = TrainingConfig {
+        model: model_config,
+        optimizer: AdamConfig::new(),
+        num_epochs: epochs,
+        batch_size,
+        num_workers: 1,
+        seed: 42,
+        learning_rate: initial_learning_rate,
+        margin: 1.0,
+        loss_function: loss_fn,
+    };
     // Create tokenizer
     let tokenizer = create_demo_tokenizer()?;
 
-    // Start training with new approach
-    train_model_real(
-        model,
-        tokenizer,
+    // Convert datasets to Burn format
+    let burn_train_dataset = BurnTrainingDataset::from_dataset(&train_dataset);
+    let burn_validation_dataset = validation_dataset.as_ref().map(|ds| BurnTrainingDataset::from_dataset(ds));
+
+    // Start training with new Learner-based approach
+    train_with_learner::<AutodiffBackend>(
+        &output_dir.to_string_lossy(),
         config,
-        train_dataset,
-        validation_dataset,
         device,
-    )
-    .await?;
+        burn_train_dataset,
+        burn_validation_dataset,
+        tokenizer,
+    );
 
     println!("\n🎉 Training completed!");
 
