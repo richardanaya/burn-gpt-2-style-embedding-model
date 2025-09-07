@@ -4,8 +4,11 @@ pub mod similarity;
 pub mod tokenizer;
 pub mod training;
 
-pub use data::{Dataset, TrainingExample, DatasetStats};
+pub use data::{Dataset, DatasetStats, TrainingExample};
 pub use model::{Gpt2Config, Gpt2Model};
 pub use similarity::*;
 pub use tokenizer::*;
-pub use training::{train_model, train_with_learner, load_model, TrainingConfig, BurnTrainingDataset, LegacyTrainingConfig, LossFunction, LearningRateScheduler, SimilarityAccuracyMetric};
+pub use training::{
+    load_model, train_model, train_with_learner, BurnTrainingDataset, LearningRateScheduler,
+    LegacyTrainingConfig, LossFunction, SimilarityAccuracyMetric, TrainingConfig,
+};

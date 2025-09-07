@@ -1,64 +1,101 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+use tokenizers::Tokenizer;
 
-/// Simple tokenizer wrapper for demo purposes
+/// GPT-2 tokenizer wrapper using the tokenizers crate
 #[derive(Debug, Clone)]
 pub struct Gpt2Tokenizer {
-    vocab_size: usize,
+    tokenizer: Tokenizer,
     max_length: usize,
 }
 
 impl Gpt2Tokenizer {
-    /// Creates a simple tokenizer for demo purposes
-    pub fn new_simple(max_length: usize) -> Result<Self> {
+    /// Creates a tokenizer from a tokenizer.json file
+    pub fn from_file(tokenizer_path: &str, max_length: usize) -> Result<Self> {
+        let tokenizer = Tokenizer::from_file(tokenizer_path)
+            .map_err(|e| anyhow!("Failed to load tokenizer: {}", e))?;
         Ok(Self {
-            vocab_size: 50257, // GPT-2 standard vocab size
+            tokenizer,
             max_length,
         })
     }
 
+    /// Creates a simple tokenizer for demo purposes (fallback)
+    pub fn new_simple(max_length: usize) -> Result<Self> {
+        // Try to load from tokenizer.json first
+        if let Ok(tokenizer) = Self::from_file("tokenizer.json", max_length) {
+            return Ok(tokenizer);
+        }
+
+        // Fallback: try to load from another path or create a minimal tokenizer
+        Err(anyhow!(
+            "No tokenizer found. Please ensure tokenizer.json is available."
+        ))
+    }
+
     /// Tokenize a single text string into token IDs
-    /// This is a very simple demo tokenizer - real tokenization would be much more complex
-    pub fn encode(&self, text: &str, _add_special_tokens: bool) -> Result<Vec<u32>> {
-        // Simple character-based tokenization for demo
-        let mut ids: Vec<u32> = text
-            .chars()
-            .map(|c| (c as u32) % self.vocab_size as u32)
-            .collect();
+    pub fn encode(&self, text: &str, add_special_tokens: bool) -> Result<Vec<u32>> {
+        let encoding = self
+            .tokenizer
+            .encode(text, add_special_tokens)
+            .map_err(|e| anyhow!("Failed to encode text: {}", e))?;
+        let mut ids = encoding.get_ids().to_vec();
 
         // Truncate if necessary
         if ids.len() > self.max_length {
             ids.truncate(self.max_length);
         }
 
-        // Pad if necessary
+        // Pad if necessary (use pad token ID if available, otherwise use 0)
+        let pad_token = self.tokenizer.get_padding().map(|p| p.pad_id).unwrap_or(0);
+
         while ids.len() < self.max_length {
-            ids.push(50256); // End of text token ID
+            ids.push(pad_token);
         }
 
         Ok(ids)
     }
 
-    /// Decode token IDs back to text (simplified)
-    pub fn decode(&self, ids: &[u32], _skip_special_tokens: bool) -> Result<String> {
-        let text: String = ids
-            .iter()
-            .filter(|&&id| id != 50256) // Skip padding tokens
-            .map(|&id| char::from_u32(id).unwrap_or('?'))
-            .collect();
+    /// Decode token IDs back to text
+    pub fn decode(&self, ids: &[u32], skip_special_tokens: bool) -> Result<String> {
+        let text = self
+            .tokenizer
+            .decode(ids, skip_special_tokens)
+            .map_err(|e| anyhow!("Failed to decode tokens: {}", e))?;
         Ok(text)
     }
 
     /// Tokenize multiple texts
     pub fn encode_batch(&self, texts: &[&str], add_special_tokens: bool) -> Result<Vec<Vec<u32>>> {
-        texts
-            .iter()
-            .map(|text| self.encode(text, add_special_tokens))
-            .collect()
+        let encodings = self
+            .tokenizer
+            .encode_batch(texts.to_vec(), add_special_tokens)
+            .map_err(|e| anyhow!("Failed to encode batch: {}", e))?;
+        let mut result = Vec::new();
+
+        for encoding in encodings {
+            let mut ids = encoding.get_ids().to_vec();
+
+            // Truncate if necessary
+            if ids.len() > self.max_length {
+                ids.truncate(self.max_length);
+            }
+
+            // Pad if necessary
+            let pad_token = self.tokenizer.get_padding().map(|p| p.pad_id).unwrap_or(0);
+
+            while ids.len() < self.max_length {
+                ids.push(pad_token);
+            }
+
+            result.push(ids);
+        }
+
+        Ok(result)
     }
 
     /// Get vocabulary size
     pub fn vocab_size(&self) -> usize {
-        self.vocab_size
+        self.tokenizer.get_vocab_size(false)
     }
 
     /// Get max sequence length
@@ -69,6 +106,7 @@ impl Gpt2Tokenizer {
 
 /// Helper function to create a demo tokenizer for testing
 pub fn create_demo_tokenizer() -> Result<Gpt2Tokenizer> {
+    // Try to load from tokenizer.json if available, otherwise fallback
     Gpt2Tokenizer::new_simple(1024)
 }
 

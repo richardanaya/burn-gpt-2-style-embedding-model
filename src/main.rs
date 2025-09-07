@@ -1,10 +1,9 @@
 use anyhow::Result;
-use burn::prelude::*;
 use burn::optim::AdamConfig;
+use burn::prelude::*;
 use burn_gpt_n_embedding_model::{
-    create_demo_tokenizer, load_model, train_with_learner, 
-    Dataset, Gpt2Config, Gpt2Model, LossFunction, LearningRateScheduler, SimilarityCalculator, 
-    TrainingConfig, BurnTrainingDataset,
+    load_model, train_with_learner, BurnTrainingDataset, Dataset, Gpt2Config, Gpt2Model,
+    Gpt2Tokenizer, LearningRateScheduler, LossFunction, SimilarityCalculator, TrainingConfig,
 };
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -15,19 +14,43 @@ type Backend = burn::backend::wgpu::Wgpu;
 type AutodiffBackend = burn::backend::Autodiff<Backend>;
 
 /// Parse learning rate scheduler from string and automatically choose initial learning rate
-fn parse_learning_rate_config(scheduler_str: &str, initial_lr: Option<f64>) -> (LearningRateScheduler, f64) {
+fn parse_learning_rate_config(
+    scheduler_str: &str,
+    initial_lr: Option<f64>,
+) -> (LearningRateScheduler, f64) {
     let (scheduler, auto_lr) = match scheduler_str.to_lowercase().as_str() {
         "fixed" => (LearningRateScheduler::Fixed, 0.001),
-        "linear-decay" => (LearningRateScheduler::LinearDecay { final_lr: 0.00001 }, 0.01),
-        "exponential-decay" => (LearningRateScheduler::ExponentialDecay { decay_rate: 0.95 }, 0.005),
-        "step-decay" => (LearningRateScheduler::StepDecay { step_size: 3, gamma: 0.5 }, 0.01),
-        "cosine-annealing" => (LearningRateScheduler::CosineAnnealing { min_lr: 0.00001 }, 0.01),
+        "linear-decay" => (
+            LearningRateScheduler::LinearDecay { final_lr: 0.00001 },
+            0.01,
+        ),
+        "exponential-decay" => (
+            LearningRateScheduler::ExponentialDecay { decay_rate: 0.95 },
+            0.005,
+        ),
+        "step-decay" => (
+            LearningRateScheduler::StepDecay {
+                step_size: 3,
+                gamma: 0.5,
+            },
+            0.01,
+        ),
+        "cosine-annealing" => (
+            LearningRateScheduler::CosineAnnealing { min_lr: 0.00001 },
+            0.01,
+        ),
         _ => {
-            eprintln!("Unknown learning rate scheduler: {}. Using cosine-annealing.", scheduler_str);
-            (LearningRateScheduler::CosineAnnealing { min_lr: 0.00001 }, 0.01)
+            eprintln!(
+                "Unknown learning rate scheduler: {}. Using cosine-annealing.",
+                scheduler_str
+            );
+            (
+                LearningRateScheduler::CosineAnnealing { min_lr: 0.00001 },
+                0.01,
+            )
         }
     };
-    
+
     let final_lr = initial_lr.unwrap_or(auto_lr);
     (scheduler, final_lr)
 }
@@ -70,7 +93,7 @@ enum Commands {
         /// Learning rate scheduler: fixed, linear-decay, exponential-decay, step-decay, cosine-annealing
         #[arg(long, default_value = "cosine-annealing")]
         lr_scheduler: String,
-        
+
         /// Initial learning rate (default: adaptive based on scheduler)
         #[arg(long)]
         initial_lr: Option<f64>,
@@ -86,23 +109,27 @@ enum Commands {
         /// Load pre-trained model to continue training
         #[arg(long)]
         resume_from: Option<PathBuf>,
-        
+
         /// Number of attention heads (default: 12)
         #[arg(long, default_value = "12")]
         n_heads: usize,
-        
+
         /// Number of transformer layers (default: 12)
         #[arg(long, default_value = "12")]
         n_layers: usize,
-        
+
         /// Embedding dimension size (default: 768)
         #[arg(long, default_value = "768")]
         d_model: usize,
-        
+
+        /// Maximum sequence length / context size (default: 1024)
+        #[arg(long, default_value = "1024")]
+        context_size: usize,
+
         /// Limit training examples for testing (0 = no limit)
         #[arg(long, default_value = "0")]
         limit_train: usize,
-        
+
         /// Limit validation examples for testing (0 = no limit)
         #[arg(long, default_value = "0")]
         limit_validation: usize,
@@ -121,18 +148,22 @@ enum Commands {
         /// Output format: json or raw
         #[arg(short, long, default_value = "json")]
         format: String,
-        
+
         /// Number of attention heads (default: 12)
         #[arg(long, default_value = "12")]
         n_heads: usize,
-        
+
         /// Number of transformer layers (default: 12)
         #[arg(long, default_value = "12")]
         n_layers: usize,
-        
+
         /// Embedding dimension size (default: 768)
         #[arg(long, default_value = "768")]
         d_model: usize,
+
+        /// Maximum sequence length / context size (default: 1024)
+        #[arg(long, default_value = "1024")]
+        context_size: usize,
     },
 
     /// Calculate similarity between two sentences
@@ -152,18 +183,22 @@ enum Commands {
         /// Show all similarity metrics (not just cosine)
         #[arg(long)]
         all_metrics: bool,
-        
+
         /// Number of attention heads (default: 4)
         #[arg(long, default_value = "4")]
         n_heads: usize,
-        
+
         /// Number of transformer layers (default: 4)
         #[arg(long, default_value = "4")]
         n_layers: usize,
-        
+
         /// Embedding dimension size (default: 768)
         #[arg(long, default_value = "768")]
         d_model: usize,
+
+        /// Maximum sequence length / context size (default: 1024)
+        #[arg(long, default_value = "1024")]
+        context_size: usize,
     },
 }
 
@@ -189,6 +224,7 @@ async fn main() -> Result<()> {
             n_heads,
             n_layers,
             d_model,
+            context_size,
             limit_train,
             limit_validation,
         } => {
@@ -206,6 +242,7 @@ async fn main() -> Result<()> {
                 *n_heads,
                 *n_layers,
                 *d_model,
+                *context_size,
                 *limit_train,
                 *limit_validation,
                 device,
@@ -220,7 +257,20 @@ async fn main() -> Result<()> {
             n_heads,
             n_layers,
             d_model,
-        } => embed_sentence(model.as_ref(), sentence, format, *n_heads, *n_layers, *d_model, device).await,
+            context_size,
+        } => {
+            embed_sentence(
+                model.as_ref(),
+                sentence,
+                format,
+                *n_heads,
+                *n_layers,
+                *d_model,
+                *context_size,
+                device,
+            )
+            .await
+        }
 
         Commands::Similarity {
             model,
@@ -230,7 +280,21 @@ async fn main() -> Result<()> {
             n_heads,
             n_layers,
             d_model,
-        } => calculate_similarity(model.as_ref(), sentence1, sentence2, *all_metrics, *n_heads, *n_layers, *d_model, device).await,
+            context_size,
+        } => {
+            calculate_similarity(
+                model.as_ref(),
+                sentence1,
+                sentence2,
+                *all_metrics,
+                *n_heads,
+                *n_layers,
+                *d_model,
+                *context_size,
+                device,
+            )
+            .await
+        }
     }
 }
 
@@ -242,11 +306,12 @@ async fn embed_sentence(
     n_heads: usize,
     n_layers: usize,
     d_model: usize,
+    context_size: usize,
     device: burn::backend::wgpu::WgpuDevice,
 ) -> Result<()> {
     let config = Gpt2Config {
         vocab_size: 50257,
-        max_seq_len: 1024,
+        max_seq_len: context_size,
         d_model,
         n_heads,
         n_layers,
@@ -260,7 +325,7 @@ async fn embed_sentence(
         Gpt2Model::new(config, &device)
     };
 
-    let tokenizer = create_demo_tokenizer()?;
+    let tokenizer = Gpt2Tokenizer::new_simple(context_size)?;
 
     // Get embedding
     let token_ids = tokenizer.encode(sentence, true)?;
@@ -306,11 +371,12 @@ async fn calculate_similarity(
     n_heads: usize,
     n_layers: usize,
     d_model: usize,
+    context_size: usize,
     device: burn::backend::wgpu::WgpuDevice,
 ) -> Result<()> {
     let config = Gpt2Config {
         vocab_size: 50257,
-        max_seq_len: 1024,
+        max_seq_len: context_size,
         d_model,
         n_heads,
         n_layers,
@@ -324,7 +390,7 @@ async fn calculate_similarity(
         Gpt2Model::new(config, &device)
     };
 
-    let tokenizer = create_demo_tokenizer()?;
+    let tokenizer = Gpt2Tokenizer::new_simple(context_size)?;
 
     // Create similarity calculator
     let calculator = SimilarityCalculator::new(model, tokenizer);
@@ -363,6 +429,7 @@ async fn train_model(
     n_heads: usize,
     n_layers: usize,
     d_model: usize,
+    context_size: usize,
     limit_train: usize,
     limit_validation: usize,
     device: burn::backend::wgpu::WgpuDevice,
@@ -373,13 +440,16 @@ async fn train_model(
     // Load training dataset
     println!("Loading training data from: {}", train_data_path.display());
     let mut train_dataset = Dataset::from_tsv(train_data_path)?;
-    
+
     // Apply training limit if specified
     if limit_train > 0 {
-        println!("🔬 Limiting training data to {} examples for testing", limit_train);
+        println!(
+            "🔬 Limiting training data to {} examples for testing",
+            limit_train
+        );
         train_dataset.limit(limit_train);
     }
-    
+
     train_dataset.statistics().print();
     println!();
 
@@ -387,16 +457,23 @@ async fn train_model(
     let validation_dataset = if let Some(val_path) = validation_data_path {
         println!("Loading validation data from: {}", val_path.display());
         let mut val_dataset = Dataset::from_tsv(val_path)?;
-        
-        // Apply validation limit if specified  
+
+        // Apply validation limit if specified
         if limit_validation > 0 {
-            println!("🔬 Limiting validation data to {} examples for testing (before: {})", limit_validation, val_dataset.examples.len());
+            println!(
+                "🔬 Limiting validation data to {} examples for testing (before: {})",
+                limit_validation,
+                val_dataset.examples.len()
+            );
             val_dataset.limit(limit_validation);
             println!("🔬 After limiting: {} examples", val_dataset.examples.len());
         } else {
-            println!("🔬 No validation limit specified (limit_validation = {})", limit_validation);
+            println!(
+                "🔬 No validation limit specified (limit_validation = {})",
+                limit_validation
+            );
         }
-        
+
         val_dataset.statistics().print();
         println!();
         Some(val_dataset)
@@ -406,8 +483,9 @@ async fn train_model(
     };
 
     // Parse learning rate scheduler and automatically choose initial learning rate
-    let (_lr_scheduler, initial_learning_rate) = parse_learning_rate_config(lr_scheduler, initial_lr);
-    
+    let (_lr_scheduler, initial_learning_rate) =
+        parse_learning_rate_config(lr_scheduler, initial_lr);
+
     // Parse loss function
     let loss_fn = match loss_function.to_lowercase().as_str() {
         "contrastive" => LossFunction::Contrastive,
@@ -425,7 +503,7 @@ async fn train_model(
     // Create model configuration first
     let model_config = Gpt2Config {
         vocab_size: 50257,
-        max_seq_len: 1024,
+        max_seq_len: context_size,
         d_model,
         n_heads,
         n_layers,
@@ -445,12 +523,14 @@ async fn train_model(
         loss_function: loss_fn,
     };
     // Create tokenizer
-    let tokenizer = create_demo_tokenizer()?;
+    let tokenizer = Gpt2Tokenizer::new_simple(context_size)?;
 
     // Convert datasets to Burn format
     let burn_train_dataset = BurnTrainingDataset::from_dataset(&train_dataset);
-    let burn_validation_dataset = validation_dataset.as_ref().map(|ds| BurnTrainingDataset::from_dataset(ds));
-    
+    let burn_validation_dataset = validation_dataset
+        .as_ref()
+        .map(|ds| BurnTrainingDataset::from_dataset(ds));
+
     // Always provide a validation dataset - either the provided one or a limited version of training data
     let burn_validation_dataset = if let Some(val_dataset) = burn_validation_dataset {
         val_dataset
@@ -459,7 +539,10 @@ async fn train_model(
         let mut limited_train = train_dataset.clone();
         if limit_validation > 0 {
             limited_train.limit(limit_validation);
-            println!("🔬 Using {} examples from training data for validation", limit_validation);
+            println!(
+                "🔬 Using {} examples from training data for validation",
+                limit_validation
+            );
         }
         BurnTrainingDataset::from_dataset(&limited_train)
     };
