@@ -1,8 +1,8 @@
 use anyhow::Result;
 use burn::prelude::*;
 use burn_gpt2_embedding_model::{
-    create_demo_tokenizer, load_model, Gpt2Config, Gpt2Model,
-    SimilarityCalculator,
+    create_demo_tokenizer, load_model, save_model, Dataset, Gpt2Config, Gpt2Model,
+    SimilarityCalculator, Trainer, TrainingConfig, LossFunction,
 };
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -22,6 +22,45 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Train the model on TSV data
+    Train {
+        /// Path to training TSV file
+        #[arg(short, long)]
+        train_data: PathBuf,
+        
+        /// Path to validation TSV file (optional)
+        #[arg(short, long)]
+        validation_data: Option<PathBuf>,
+        
+        /// Path to save model checkpoints (default: checkpoints/)
+        #[arg(short, long, default_value = "checkpoints")]
+        output_dir: PathBuf,
+        
+        /// Number of training epochs
+        #[arg(short, long, default_value = "10")]
+        epochs: usize,
+        
+        /// Batch size for training
+        #[arg(short, long, default_value = "16")]
+        batch_size: usize,
+        
+        /// Learning rate
+        #[arg(short, long, default_value = "0.0001")]
+        learning_rate: f64,
+        
+        /// Loss function: contrastive, cosine, or mse
+        #[arg(long, default_value = "contrastive")]
+        loss: String,
+        
+        /// Checkpoint frequency (save every N epochs)
+        #[arg(long, default_value = "1")]
+        checkpoint_every: usize,
+        
+        /// Load pre-trained model to continue training
+        #[arg(long)]
+        resume_from: Option<PathBuf>,
+    },
+    
     /// Get vector embedding for a sentence
     Embed {
         /// Path to the trained model file (optional - will use random weights if not provided)
@@ -65,6 +104,29 @@ async fn main() -> Result<()> {
     let device = burn::backend::wgpu::WgpuDevice::default();
     
     match &cli.command {
+        Commands::Train {
+            train_data,
+            validation_data,
+            output_dir,
+            epochs,
+            batch_size,
+            learning_rate,
+            loss,
+            checkpoint_every,
+            resume_from,
+        } => train_model(
+            train_data,
+            validation_data.as_ref(),
+            output_dir,
+            *epochs,
+            *batch_size,
+            *learning_rate,
+            loss,
+            *checkpoint_every,
+            resume_from.as_ref(),
+            device,
+        ).await,
+        
         Commands::Embed {
             model,
             sentence,
@@ -165,6 +227,92 @@ async fn calculate_similarity(
         println!("  1: \"{}\"", sentence1);
         println!("  2: \"{}\"", sentence2);
         println!("Cosine Similarity: {:.4} (0=different, 1=identical)", similarity);
+    }
+    
+    Ok(())
+}
+
+/// Train the model on TSV data
+async fn train_model(
+    train_data_path: &PathBuf,
+    validation_data_path: Option<&PathBuf>,
+    output_dir: &PathBuf,
+    epochs: usize,
+    batch_size: usize,
+    learning_rate: f64,
+    loss_function: &str,
+    checkpoint_every: usize,
+    resume_from: Option<&PathBuf>,
+    device: burn::backend::wgpu::WgpuDevice,
+) -> Result<()> {
+    println!("🚀 Starting GPT-2 Embedding Model Training");
+    println!("==========================================");
+    
+    // Load training dataset
+    println!("Loading training data from: {}", train_data_path.display());
+    let train_dataset = Dataset::from_tsv(train_data_path)?;
+    train_dataset.statistics().print();
+    println!();
+    
+    // Load validation dataset if provided
+    let validation_dataset = if let Some(val_path) = validation_data_path {
+        println!("Loading validation data from: {}", val_path.display());
+        let val_dataset = Dataset::from_tsv(val_path)?;
+        val_dataset.statistics().print();
+        println!();
+        Some(val_dataset)
+    } else {
+        println!("No validation data provided");
+        None
+    };
+    
+    // Parse loss function
+    let loss_fn = match loss_function.to_lowercase().as_str() {
+        "contrastive" => LossFunction::Contrastive,
+        "cosine" => LossFunction::CosineEmbedding,
+        "mse" => LossFunction::MseSimilarity,
+        _ => {
+            eprintln!("Unknown loss function: {}. Using contrastive loss.", loss_function);
+            LossFunction::Contrastive
+        }
+    };
+    
+    // Create training configuration
+    let config = TrainingConfig {
+        learning_rate,
+        epochs,
+        batch_size,
+        margin: 1.0, // Default margin for contrastive loss
+        checkpoint_every,
+        checkpoint_dir: output_dir.to_string_lossy().to_string(),
+        shuffle: true,
+        loss_function: loss_fn,
+    };
+    
+    // Create or load model
+    let model_config = Gpt2Config::default();
+    let model = if let Some(model_path) = resume_from {
+        println!("Resuming training from: {}", model_path.display());
+        load_model::<Backend>(model_config, model_path, &device)?
+    } else {
+        println!("Initializing new model with random weights");
+        Gpt2Model::new(model_config, &device)
+    };
+    
+    // Create tokenizer
+    let tokenizer = create_demo_tokenizer()?;
+    
+    // Create trainer
+    let mut trainer = Trainer::new(model, tokenizer, config, device);
+    
+    // Start training
+    let stats = trainer.train(train_dataset, validation_dataset).await?;
+    
+    // Print final statistics
+    println!("\n🎉 Training completed!");
+    println!("Final statistics:");
+    if let Some(final_stats) = stats.last() {
+        final_stats.print();
     }
     
     Ok(())
