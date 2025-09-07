@@ -6,6 +6,8 @@ use burn::record::{BinGzFileRecorder, FullPrecisionSettings};
 use burn::tensor::backend::AutodiffBackend;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 /// Save model weights in binary format
 pub fn save_model<B: Backend>(model: &Gpt2Model<B>, path: impl AsRef<Path>) -> Result<()> {
@@ -81,11 +83,21 @@ pub async fn train_model<B: Backend + AutodiffBackend>(
     _validation_dataset: Option<Dataset>,
     device: B::Device,
 ) -> Result<()> {
+    // Set up signal handling for graceful interruption
+    let interrupted = Arc::new(AtomicBool::new(false));
+    let interrupt_clone = interrupted.clone();
+    
+    ctrlc::set_handler(move || {
+        println!("\n🛑 Interrupt signal received! Finishing current batch and saving model...");
+        interrupt_clone.store(true, Ordering::SeqCst);
+    }).expect("Error setting Ctrl-C handler");
+
     println!("Starting REAL training (not fake!) with configuration:");
     println!("  Learning rate: {}", config.learning_rate);
     println!("  Epochs: {}", config.epochs);
     println!("  Batch size: {}", config.batch_size);
     println!("  Loss function: {:?}", config.loss_function);
+    println!("  💡 Press Ctrl+C to stop training gracefully and save model");
 
     // Initialize optimizer
     let _optimizer = AdamConfig::new().init::<B, Gpt2Model<B>>();
@@ -108,6 +120,19 @@ pub async fn train_model<B: Backend + AutodiffBackend>(
         let mut batch_count = 0;
 
         for (_batch_idx, batch_examples) in batches.iter().enumerate() {
+            // Check for interrupt signal
+            if interrupted.load(Ordering::SeqCst) {
+                progress.finish_with_message("Training interrupted by user".to_string());
+                let interrupt_checkpoint_path = format!("{}/interrupted_epoch_{}.bin", config.checkpoint_dir, epoch + 1);
+                println!("💾 Saving interrupted training checkpoint to: {}", interrupt_checkpoint_path);
+                if let Err(e) = save_model(&model, &interrupt_checkpoint_path) {
+                    eprintln!("❌ Failed to save interrupted checkpoint: {}", e);
+                } else {
+                    println!("✅ Model saved successfully!");
+                }
+                return Ok(());
+            }
+
             // 1. Prepare batch data
             let mut sentence1_ids = Vec::new();
             let mut sentence2_ids = Vec::new();
