@@ -111,7 +111,7 @@ enum Commands {
     /// Get vector embedding for a sentence
     Embed {
         /// Path to the trained model file (optional - will use random weights if not provided)
-        #[arg(short, long)]
+        #[arg(short, long, default_value = "./training_output/model.mpk")]
         model: Option<PathBuf>,
 
         /// Sentence to get embedding for
