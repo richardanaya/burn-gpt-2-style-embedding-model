@@ -319,7 +319,7 @@ pub fn train_with_learner<B: AutodiffBackend>(
     config: TrainingConfig, 
     device: B::Device,
     train_dataset: BurnTrainingDataset,
-    validation_dataset: Option<BurnTrainingDataset>,
+    validation_dataset: BurnTrainingDataset,
     tokenizer: Gpt2Tokenizer,
 ) {
     create_artifact_dir(artifact_dir);
@@ -337,20 +337,11 @@ pub fn train_with_learner<B: AutodiffBackend>(
         .num_workers(config.num_workers)
         .build(train_dataset.clone());
 
-    let dataloader_test = if let Some(val_dataset) = validation_dataset {
-        DataLoaderBuilder::new(batcher)
-            .batch_size(config.batch_size)
-            .shuffle(config.seed)
-            .num_workers(config.num_workers)
-            .build(val_dataset)
-    } else {
-        // Use training set for validation if no validation set provided
-        DataLoaderBuilder::new(batcher)
-            .batch_size(config.batch_size)
-            .shuffle(config.seed)
-            .num_workers(config.num_workers)
-            .build(train_dataset)
-    };
+    let dataloader_test = DataLoaderBuilder::new(batcher)
+        .batch_size(config.batch_size)
+        .shuffle(config.seed)
+        .num_workers(config.num_workers)
+        .build(validation_dataset);
 
     let learner = LearnerBuilder::new(artifact_dir)
         .metric_train_numeric(burn::train::metric::LossMetric::new())

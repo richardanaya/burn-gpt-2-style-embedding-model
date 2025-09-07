@@ -13,7 +13,7 @@ pub struct TrainingExample {
 }
 
 /// Dataset containing training examples
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Dataset {
     pub examples: Vec<TrainingExample>,
 }

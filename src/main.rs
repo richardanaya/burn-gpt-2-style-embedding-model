@@ -55,8 +55,8 @@ enum Commands {
         #[arg(short, long)]
         validation_data: Option<PathBuf>,
 
-        /// Path to save model checkpoints (default: checkpoints/)
-        #[arg(short, long, default_value = "checkpoints")]
+        /// Path to save model checkpoints (default: training_output/)
+        #[arg(short, long, default_value = "training_output")]
         output_dir: PathBuf,
 
         /// Number of training epochs
@@ -388,10 +388,13 @@ async fn train_model(
         println!("Loading validation data from: {}", val_path.display());
         let mut val_dataset = Dataset::from_tsv(val_path)?;
         
-        // Apply validation limit if specified
+        // Apply validation limit if specified  
         if limit_validation > 0 {
-            println!("🔬 Limiting validation data to {} examples for testing", limit_validation);
+            println!("🔬 Limiting validation data to {} examples for testing (before: {})", limit_validation, val_dataset.examples.len());
             val_dataset.limit(limit_validation);
+            println!("🔬 After limiting: {} examples", val_dataset.examples.len());
+        } else {
+            println!("🔬 No validation limit specified (limit_validation = {})", limit_validation);
         }
         
         val_dataset.statistics().print();
@@ -447,6 +450,19 @@ async fn train_model(
     // Convert datasets to Burn format
     let burn_train_dataset = BurnTrainingDataset::from_dataset(&train_dataset);
     let burn_validation_dataset = validation_dataset.as_ref().map(|ds| BurnTrainingDataset::from_dataset(ds));
+    
+    // Always provide a validation dataset - either the provided one or a limited version of training data
+    let burn_validation_dataset = if let Some(val_dataset) = burn_validation_dataset {
+        val_dataset
+    } else {
+        // No validation dataset provided, use a limited version of training data
+        let mut limited_train = train_dataset.clone();
+        if limit_validation > 0 {
+            limited_train.limit(limit_validation);
+            println!("🔬 Using {} examples from training data for validation", limit_validation);
+        }
+        BurnTrainingDataset::from_dataset(&limited_train)
+    };
 
     // Start training with new Learner-based approach
     train_with_learner::<AutodiffBackend>(
