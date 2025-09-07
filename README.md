@@ -62,13 +62,13 @@ Token Embeddings + Position Embeddings
 │ Transformer     │  ← Repeated 12 times
 │ Block           │
 │ ┌─────────────┐ │
-│ │Multi-Head   │ │  ← Attention: "What words relate to what?"
-│ │Attention    │ │
+│ │Multi-Head   │ │  ← **Attention**: "Which tokens are relevant for understanding this token?"
+│ │Attention    │ │     Each of 12 heads captures different types of token relationships
 │ └─────────────┘ │
 │        +        │  ← Residual Connection
 │ ┌─────────────┐ │
-│ │Feed-Forward │ │  ← Processing: "What patterns do I see?"
-│ │Network (MLP)│ │
+│ │Feed-Forward │ │  ← **MLP**: "Now what should I think about what I learned?"
+│ │Network (MLP)│ │     Processes attended information into meaningful patterns
 │ └─────────────┘ │
 │        +        │  ← Residual Connection
 └─────────────────┘
@@ -78,15 +78,38 @@ Layer Normalization
 Text Embeddings (768-dimensional vectors)
 ```
 
-#### Multi-Head Attention
-- **What it does**: Allows the model to focus on different parts of the input simultaneously
-- **Why 12 heads**: Each head can specialize in different types of relationships (syntax, semantics, etc.)
-- **Key insight**: Like having 12 different "attention spotlights" working in parallel
+#### Multi-Head Attention: "Which tokens are relevant for understanding this token?"
 
-#### Feed-Forward Network (MLP)
-- **Purpose**: Processes the attended information to extract patterns
-- **Architecture**: Linear → GELU activation → Linear → Dropout
-- **Size**: 4x expansion (768 → 3072 → 768 dimensions)
+For each token in the sequence, attention computes a relevance score with every other token, answering the crucial question: **"Which other tokens are relevant for understanding this token?"**
+
+**How Multiple Heads Work:**
+- **Head 1** might focus on **syntactic relationships** (subject-verb, noun-adjective pairs)
+- **Head 2** might capture **semantic similarity** (synonyms, related concepts)  
+- **Head 3** might track **positional patterns** (beginning/end of sentences, phrases)
+- **Head 4** might identify **entity relationships** (person-to-action, object-to-location)
+- **Heads 5-12** capture other nuanced linguistic patterns
+
+**Example**: For the word "bank" in "The river bank was muddy":
+- Some heads focus on "river" (disambiguating meaning) 
+- Others attend to "muddy" (confirming the geographical context)
+- Different heads capture different types of relevancy simultaneously
+
+This parallel processing allows the model to understand complex, multi-faceted relationships between words.
+
+#### Feed-Forward Network (MLP): "Now what should I think about what I learned?"
+
+After attention identifies relevant tokens, the MLP processes this information to answer: **"Now what should I think about what I learned?"**
+
+**What the MLP Computes:**
+- **Pattern Integration**: Combines the attended information into coherent concepts
+- **Feature Extraction**: Identifies higher-level patterns from the attention outputs
+- **Knowledge Application**: Applies learned linguistic rules and semantic understanding
+- **Representation Refinement**: Transforms raw attention into meaningful embeddings
+
+**Architecture Details:**
+- **Linear → GELU activation → Linear → Dropout**
+- **4x expansion**: 768 → 3072 → 768 dimensions
+- **Purpose**: The expansion allows complex pattern matching, then compression back to embedding size
 
 ### 3. 📐 Similarity Calculator (`src/similarity.rs`)
 Compares embeddings using various mathematical approaches:
@@ -123,12 +146,34 @@ For each of 12 transformer blocks:
   4. Layer normalization stabilizes training
 ```
 
-### Step 4: Sentence Embedding
+### Step 4: Sentence Embedding Generation
+
+**Why We Extract from Middle Layers (Not Too Early, Not Too High):**
+
+The model has 12 transformer layers, and we typically extract embeddings from around **layer 6-8** because:
+
+- **Too Early (layers 1-3)**: Embeddings focus on surface-level features (syntax, word forms)
+- **Sweet Spot (layers 6-8)**: Perfect balance of syntax + semantics, rich contextual understanding
+- **Too Late (layers 10-12)**: Over-specialized for next-token prediction, less generalizable
+
+**Why We Use Mean Pooling:**
+
 ```
-Token embeddings → Averaged → Single 768D sentence vector
+Token embeddings → Mean Pooling → Single 768D sentence vector
 ```
 
-This final vector captures the semantic meaning of the entire sentence!
+**Mean pooling** averages all token embeddings because:
+- **Captures Global Context**: Every word contributes to the final representation
+- **Length Invariant**: Works equally well for short and long sentences  
+- **Preserves Information**: No single token dominates; balanced representation
+- **Computational Efficiency**: Simple, fast operation compared to learned pooling
+
+**Alternative Approaches:**
+- **[CLS] token**: BERT-style approach, but GPT-2 doesn't have special tokens
+- **Max pooling**: Can lose information from important but non-maximum features
+- **Weighted pooling**: More complex, requires additional training
+
+This final averaged vector captures the semantic meaning of the entire sentence!
 
 ## 🚀 Getting Started
 
@@ -252,6 +297,62 @@ id	sentence1	sentence2	label
 - `0` = Different sentences (should have different embeddings)
 
 This format enables training the model to learn meaningful semantic representations.
+
+## 🔬 Technical Deep Dive: Why These Design Choices?
+
+### Embedding Layer Selection Strategy
+
+**The Layer Depth Sweet Spot:**
+
+In our 12-layer GPT-2 model, different layers capture different levels of linguistic understanding:
+
+```
+Layer 1-2:   Surface features (character patterns, basic syntax)
+Layer 3-4:   Word-level semantics (part of speech, simple relationships)  
+Layer 5-6:   Phrase-level understanding (noun phrases, verb phrases)
+Layer 7-8:   ← OPTIMAL: Rich contextual semantics + syntax balance
+Layer 9-10:  Sentence-level patterns (discourse, complex syntax)
+Layer 11-12: Task-specific features (next-token prediction bias)
+```
+
+**Research findings show:**
+- **Early layers**: Good for syntactic tasks, poor for semantic similarity
+- **Middle layers (6-8)**: Best balance for general-purpose embeddings
+- **Late layers**: Over-fitted to language modeling objective
+
+This is why we extract embeddings from the middle layers rather than the final output.
+
+### Mean Pooling vs. Other Aggregation Methods
+
+**Why Mean Pooling Works Best:**
+
+1. **Mathematical Properties:**
+   - Preserves vector magnitude relationships
+   - Maintains semantic distances between sentences
+   - Provides stable gradients during training
+
+2. **Linguistic Justification:**
+   - Every word contributes to sentence meaning
+   - Avoids bias toward beginning/end tokens
+   - Naturally handles variable sentence lengths
+
+3. **Empirical Performance:**
+   - Consistently outperforms max pooling on similarity tasks
+   - More robust than attention-weighted pooling
+   - Computationally efficient for real-time applications
+
+**Comparison with alternatives:**
+```rust
+// Mean pooling (our choice)
+sentence_embedding = token_embeddings.mean(dim=0)
+
+// Max pooling (can lose information)  
+sentence_embedding = token_embeddings.max(dim=0)
+
+// Attention-weighted (more complex, not always better)
+weights = attention_network(token_embeddings)
+sentence_embedding = (weights * token_embeddings).sum(dim=0)
+```
 
 ## 🔬 Advanced Features
 
