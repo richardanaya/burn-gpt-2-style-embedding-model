@@ -87,6 +87,10 @@ enum Commands {
         /// Limit validation examples for testing (0 = no limit)
         #[arg(long, default_value = "0")]
         limit_validation: usize,
+
+        /// Margin parameter for contrastive loss (default: 1.0)
+        #[arg(long, default_value = "1.0")]
+        margin: f32,
     },
 
     /// Get vector embedding for a sentence
@@ -216,6 +220,7 @@ async fn main() -> Result<()> {
             context_size,
             limit_train,
             limit_validation,
+            margin,
         } => {
             train_model(
                 train_data,
@@ -234,6 +239,7 @@ async fn main() -> Result<()> {
                 *context_size,
                 *limit_train,
                 *limit_validation,
+                *margin,
                 device,
             )
             .await

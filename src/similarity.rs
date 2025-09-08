@@ -385,6 +385,7 @@ pub async fn calculate_similarity<B: Backend<FloatElem = f32>>(
         n_heads,
         n_layers,
         dropout: 0.1,
+        margin: 1.0,
     };
     let model = if let Some(path) = model_path {
         println!("Loading model from: {}", path.display());

@@ -12,7 +12,7 @@ use std::path::Path;
 /// Configuration for the GPT-2 model
 /// Based on GPT-2 117M parameters:
 /// - 12 transformer blocks
-/// - 12 attention heads per block  
+/// - 12 attention heads per block
 /// - 768 embedding dimensions
 /// - Context window of 1024 tokens
 #[derive(Config, Debug)]
@@ -23,6 +23,9 @@ pub struct Gpt2Config {
     pub n_heads: usize,
     pub n_layers: usize,
     pub dropout: f64,
+    /// Margin parameter for contrastive loss
+    #[config(default = 1.0)]
+    pub margin: f32,
 }
 
 impl Default for Gpt2Config {
@@ -34,6 +37,7 @@ impl Default for Gpt2Config {
             n_heads: 4,        // Number of attention heads (reduced from 12)
             n_layers: 4,       // Number of transformer layers (reduced from 12)
             dropout: 0.1,      // Dropout rate
+            margin: 1.0,       // Default margin for contrastive loss
         }
     }
 }
@@ -184,6 +188,8 @@ pub struct Gpt2Model<B: Backend> {
     transformer_blocks: Vec<TransformerBlock<B>>,
     ln_f: LayerNorm<B>,
     dropout: Dropout,
+    /// Margin parameter for contrastive loss
+    pub margin: f32,
 }
 
 impl<B: Backend> Gpt2Model<B> {
@@ -223,6 +229,7 @@ impl<B: Backend> Gpt2Model<B> {
             transformer_blocks,
             ln_f,
             dropout,
+            margin: config.margin,
         }
     }
 

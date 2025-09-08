@@ -28,7 +28,7 @@ pub struct TrainingConfig {
     #[config(default = 10)]
     pub num_epochs: usize,
     /// Batch size for training
-    #[config(default = 2)]
+    #[config(default = 8)]
     pub batch_size: usize,
     /// Number of worker threads for data loading
     #[config(default = 1)]
@@ -39,9 +39,6 @@ pub struct TrainingConfig {
     /// Initial learning rate
     #[config(default = 1.0e-4)]
     pub learning_rate: f64,
-    /// Margin for contrastive loss
-    #[config(default = 1.0)]
-    pub margin: f32,
     /// Loss function to use
     #[config(default = "LossFunction::Contrastive")]
     pub loss_function: LossFunction,
@@ -109,13 +106,31 @@ impl BurnDataset<TrainingItem> for BurnTrainingDataset {
 /// Implement TrainStep for our Gpt2Model
 impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<B> {
     fn step(&self, batch: TrainingBatch<B>) -> TrainOutput<RegressionOutput<B>> {
-        // Forward pass - calculate diff directly to preserve gradient flow
-        let diff = self.get_sentence_embedding(batch.sentence1.clone())
-                 - self.get_sentence_embedding(batch.sentence2.clone());
-        let loss_tensor = diff.powf_scalar(2.0).mean_dim(1).mean();
+        // Forward pass - get sentence embeddings
+        let emb1 = self.get_sentence_embedding(batch.sentence1.clone());
+        let emb2 = self.get_sentence_embedding(batch.sentence2.clone());
+
+        // Calculate squared Euclidean distance between embeddings
+        let diff = emb1.clone() - emb2.clone();
+        let sq_dist = diff.powf_scalar(2.0).mean(); // shape [batch]
+
+        // Labels are already f32, ensure they're on the same device
+        let y = batch.labels.clone(); // [batch]
+
+        // Positive term: ½ * y * d²
+        let pos_loss = y.clone() * sq_dist.clone();
+
+        // Negative term: ½ * (1−y) * max(0, margin − d)²
+        let dist = sq_dist.sqrt();
+        let margin_tensor = Tensor::<B, 1>::from_floats([self.margin], &emb1.device());
+        let neg_part = burn::tensor::activation::relu(margin_tensor - dist);
+        let neg_loss = (Tensor::<B, 1>::ones_like(&y) - y.clone()) * neg_part.powf_scalar(2.0);
+
+        // Total loss: ½ * (pos_loss + neg_loss)
+        let loss_tensor = (pos_loss + neg_loss).mean() * 0.5;
 
         // Get embeddings for output (detached for display purposes)
-        let embeddings1 = self.get_sentence_embedding(batch.sentence1).detach();
+        let embeddings1 = emb1.detach();
         let output =
             RegressionOutput::new(batch.labels, embeddings1, loss_tensor.clone().unsqueeze());
         let grads = loss_tensor.backward();
@@ -130,9 +145,11 @@ impl<B: Backend> ValidStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<
         let embeddings1 = self.get_sentence_embedding(batch.sentence1).detach();
         let embeddings2 = self.get_sentence_embedding(batch.sentence2).detach();
 
-        // Calculate predictions (similarity scores)
-        let diff = embeddings1.clone() - embeddings2;
-        let predictions = diff.powf_scalar(2.0).mean_dim(1);
+        // Calculate cosine similarity as predictions (0-1 scale)
+        let dot_product = (embeddings1.clone() * embeddings2.clone()).sum_dim(1);
+        let norm1 = embeddings1.clone().powf_scalar(2.0).sum_dim(1).sqrt();
+        let norm2 = embeddings2.powf_scalar(2.0).sum_dim(1).sqrt();
+        let predictions = dot_product / (norm1 * norm2 + 1e-8); // Add small epsilon to avoid division by zero
 
         RegressionOutput::new(batch.labels, embeddings1, predictions.unsqueeze())
     }
@@ -323,6 +340,7 @@ pub async fn train_model(
     context_size: usize,
     limit_train: usize,
     limit_validation: usize,
+    margin: f32,
     device: burn::backend::wgpu::WgpuDevice,
 ) -> Result<()> {
     println!("🚀 Starting GPT-2 Embedding Model Training");
@@ -399,6 +417,7 @@ pub async fn train_model(
         n_heads,
         n_layers,
         dropout: 0.1,
+        margin,
     };
 
     // Create training configuration using the new Config pattern
@@ -410,7 +429,6 @@ pub async fn train_model(
         num_workers: 1,
         seed: 42,
         learning_rate: initial_learning_rate,
-        margin: 1.0,
         loss_function: loss_fn,
     };
     // Create tokenizer

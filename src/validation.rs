@@ -49,6 +49,7 @@ pub async fn validate_model<B: Backend<FloatElem = f32>>(
         n_heads,
         n_layers,
         dropout: 0.1,
+        margin: 1.0,
     };
 
     println!("📦 Loading model...");
