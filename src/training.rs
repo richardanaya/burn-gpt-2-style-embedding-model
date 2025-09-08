@@ -9,6 +9,7 @@ use burn::tensor::backend::AutodiffBackend;
 use burn::train::metric::state::{FormatOptions, NumericMetricState};
 use burn::train::metric::{Adaptor, Metric, MetricEntry, MetricMetadata};
 use burn::train::{LearnerBuilder, LearnerSummary, TrainOutput, TrainStep, ValidStep};
+use burn_train::metric::{ LearningRateMetric, LossMetric};
 use burn_train::renderer::tui::TuiMetricsRenderer;
 use burn_train::TrainingInterrupter;
 use std::path::PathBuf;
@@ -397,6 +398,12 @@ pub fn train_with_learner<B: AutodiffBackend>(
         .renderer(renderer)
         .devices(vec![device.clone()])
         .num_epochs(config.num_epochs)
+        .metric_train_numeric(LearningRateMetric::new())
+        .metric_valid_numeric(LearningRateMetric::new())
+        .metric_train_numeric(LossMetric::new())
+        .metric_valid_numeric(LossMetric::new())
+        .metric_train_numeric(SimilarityAccuracyMetric::new())
+        .metric_valid_numeric(SimilarityAccuracyMetric::new())
         .summary()
         .build(
             config.model.init::<B>(&device),
