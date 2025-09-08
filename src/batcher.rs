@@ -73,11 +73,8 @@ impl<B: Backend> Batcher<B, TrainingItem, TrainingBatch<B>> for TrainingBatcher 
         }
 
         if sentence1_ids.is_empty() {
-            // Return empty batch if all tokenization failed
-            let empty_tensor_1 = Tensor::<B, 2, Int>::zeros([0, 0], device);
-            let empty_tensor_2 = Tensor::<B, 2, Int>::zeros([0, 0], device);
-            let empty_labels = Tensor::<B, 1>::zeros([0], device);
-            return TrainingBatch::new(empty_tensor_1, empty_tensor_2, empty_labels);
+            // Panic if all tokenization failed - returning empty batch would cause learner to panic
+            panic!("All items in batch failed tokenization. This indicates a problem with the input data or tokenizer configuration. Check your dataset for malformed entries.");
         }
 
         // Pad sequences
@@ -88,15 +85,18 @@ impl<B: Backend> Batcher<B, TrainingItem, TrainingBatch<B>> for TrainingBatcher 
         let mut padded_sentence1 = Vec::with_capacity(batch_size * max_len1);
         let mut padded_sentence2 = Vec::with_capacity(batch_size * max_len2);
 
+        // GPT-2 pad token ID is 50256, not 0 (which is a valid BPE token)
+        const PAD_TOKEN_ID: u32 = 50256;
+        
         for seq in sentence1_ids.iter() {
             let mut padded = seq.clone();
-            padded.resize(max_len1, 0);
+            padded.resize(max_len1, PAD_TOKEN_ID);
             padded_sentence1.extend(padded.iter().map(|&x| x as i64));
         }
 
         for seq in sentence2_ids.iter() {
             let mut padded = seq.clone();
-            padded.resize(max_len2, 0);
+            padded.resize(max_len2, PAD_TOKEN_ID);
             padded_sentence2.extend(padded.iter().map(|&x| x as i64));
         }
 

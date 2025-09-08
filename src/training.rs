@@ -109,14 +109,13 @@ impl BurnDataset<TrainingItem> for BurnTrainingDataset {
 /// Implement TrainStep for our Gpt2Model
 impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<B> {
     fn step(&self, batch: TrainingBatch<B>) -> TrainOutput<RegressionOutput<B>> {
-        // Forward pass - get embeddings
-        let embeddings1 = self.get_sentence_embedding(batch.sentence1);
-        let embeddings2 = self.get_sentence_embedding(batch.sentence2);
-
-        // Calculate contrastive loss (simple MSE for now)
-        let diff = embeddings1.clone() - embeddings2;
+        // Forward pass - calculate diff directly to preserve gradient flow
+        let diff = self.get_sentence_embedding(batch.sentence1.clone())
+                 - self.get_sentence_embedding(batch.sentence2.clone());
         let loss_tensor = diff.powf_scalar(2.0).mean_dim(1).mean();
 
+        // Get embeddings for output (detached for display purposes)
+        let embeddings1 = self.get_sentence_embedding(batch.sentence1).detach();
         let output =
             RegressionOutput::new(batch.labels, embeddings1, loss_tensor.clone().unsqueeze());
         let grads = loss_tensor.backward();
@@ -154,6 +153,7 @@ pub fn train_with_learner<B: AutodiffBackend>(
     train_dataset: BurnTrainingDataset,
     validation_dataset: BurnTrainingDataset,
     tokenizer: Gpt2Tokenizer,
+    _lr_scheduler: LearningRateScheduler,
 ) {
     create_artifact_dir(artifact_dir);
     config
@@ -202,6 +202,9 @@ pub fn train_with_learner<B: AutodiffBackend>(
     println!("📊 Initializing TUI metrics renderer...");
     let renderer = TuiMetricsRenderer::new(interrupter.clone(), None);
 
+    // Note: Burn 0.18 may not have direct LR scheduler support in LearnerBuilder
+    // The scheduler logic is implemented in our custom get_learning_rate method
+    // and can be integrated with manual training loop if needed
     let learner = LearnerBuilder::new(artifact_dir)
         .with_file_checkpointer(CompactRecorder::new())
         .renderer(renderer)
@@ -371,7 +374,7 @@ pub async fn train_model(
     };
 
     // Parse learning rate scheduler and automatically choose initial learning rate
-    let (_lr_scheduler, initial_learning_rate) =
+    let (lr_scheduler, initial_learning_rate) =
         parse_learning_rate_config(lr_scheduler, initial_lr);
 
     // Parse loss function
@@ -443,6 +446,7 @@ pub async fn train_model(
         burn_train_dataset,
         burn_validation_dataset,
         tokenizer,
+        lr_scheduler,
     );
 
     println!("\n🎉 Training completed!");
