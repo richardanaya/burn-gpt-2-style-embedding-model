@@ -127,39 +127,12 @@ impl<B: Backend<FloatElem = f32>> SimilarityCalculator<B> {
         let embedding1 = self.get_sentence_embedding(sentence1)?;
         let embedding2 = self.get_sentence_embedding(sentence2)?;
 
-        // Debug: Print embedding info
-        let embed1_data = embedding1.to_data().to_vec::<f32>().unwrap();
-        let embed2_data = embedding2.to_data().to_vec::<f32>().unwrap();
-
-        eprintln!(
-            "DEBUG: Embedding 1 length: {}, sample: {:?}",
-            embed1_data.len(),
-            &embed1_data[..embed1_data.len().min(10)]
-        );
-        eprintln!(
-            "DEBUG: Embedding 2 length: {}, sample: {:?}",
-            embed2_data.len(),
-            &embed2_data[..embed2_data.len().min(10)]
-        );
-
-        // Check if embeddings are identical
-        let identical = embed1_data
-            .iter()
-            .zip(embed2_data.iter())
-            .all(|(a, b)| (a - b).abs() < 1e-6);
-        eprintln!("DEBUG: Embeddings identical: {}", identical);
-
         // Calculate cosine similarity
         let similarity = cosine_similarity(embedding1, embedding2);
 
         // Convert to scalar and normalize to 0-1 range
         let similarity_value = similarity.into_scalar();
         let normalized_similarity = (similarity_value + 1.0) / 2.0; // Convert from [-1,1] to [0,1]
-
-        eprintln!(
-            "DEBUG: Raw similarity: {}, normalized: {}",
-            similarity_value, normalized_similarity
-        );
 
         Ok(normalized_similarity)
     }
