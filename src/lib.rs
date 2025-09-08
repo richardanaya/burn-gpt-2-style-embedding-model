@@ -1,3 +1,4 @@
+pub mod batcher;
 pub mod data;
 pub mod embedding;
 pub mod model;
