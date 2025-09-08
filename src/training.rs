@@ -9,6 +9,8 @@ use burn::tensor::backend::AutodiffBackend;
 use burn::train::metric::state::{FormatOptions, NumericMetricState};
 use burn::train::metric::{Adaptor, Metric, MetricEntry, MetricMetadata};
 use burn::train::{LearnerBuilder, LearnerSummary, TrainOutput, TrainStep, ValidStep};
+use burn_train::renderer::tui::TuiMetricsRenderer;
+use burn_train::TrainingInterrupter;
 use std::path::PathBuf;
 
 // Type aliases for main.rs compatibility
@@ -335,7 +337,7 @@ fn create_artifact_dir(artifact_dir: &str) {
     std::fs::create_dir_all(artifact_dir).ok();
 }
 
-/// Official Burn training function using the Learner pattern - exactly matching the docs
+/// Official Burn training function using the Learner pattern with TUI metrics
 pub fn train_with_learner<B: AutodiffBackend>(
     artifact_dir: &str,
     config: TrainingConfig,
@@ -376,10 +378,23 @@ pub fn train_with_learner<B: AutodiffBackend>(
     println!("💾 Output dir: {}", artifact_dir);
     println!();
 
+    // Create training interrupter for graceful shutdown
+    let interrupter = TrainingInterrupter::new();
+    
+    // Setup Ctrl+C handler for graceful shutdown
+    let interrupt_clone = interrupter.clone();
+    ctrlc::set_handler(move || {
+        println!("\n🛑 Graceful shutdown requested (Ctrl+C)...");
+        interrupt_clone.stop();
+    }).expect("Error setting Ctrl-C handler");
+    
+    // Setup TUI metrics renderer
+    println!("📊 Initializing TUI metrics renderer...");
+    let renderer = TuiMetricsRenderer::new(interrupter.clone(), None);
+    
     let learner = LearnerBuilder::new(artifact_dir)
-        .metric_train_numeric(burn::train::metric::LossMetric::new())
-        .metric_valid_numeric(burn::train::metric::LossMetric::new())
         .with_file_checkpointer(CompactRecorder::new())
+        .renderer(renderer)
         .devices(vec![device.clone()])
         .num_epochs(config.num_epochs)
         .summary()
@@ -802,7 +817,7 @@ pub async fn train_model(
         BurnTrainingDataset::from_dataset(&limited_train)
     };
 
-    // Start training with new Learner-based approach
+    // Start training with TUI metrics renderer
     train_with_learner::<WgpuAutodiffBackend>(
         &output_dir.to_string_lossy(),
         config,
