@@ -1,4 +1,5 @@
-use crate::{load_model, Gpt2Config, Gpt2Model, Gpt2Tokenizer};
+use crate::model::load_model;
+use crate::{Gpt2Config, Gpt2Model, Gpt2Tokenizer};
 use anyhow::Result;
 use burn::prelude::*;
 use std::path::PathBuf;

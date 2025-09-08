@@ -375,7 +375,8 @@ pub async fn calculate_similarity<B: Backend<FloatElem = f32>>(
     context_size: usize,
     device: B::Device,
 ) -> anyhow::Result<()> {
-    use crate::{load_model, Gpt2Config, Gpt2Model, Gpt2Tokenizer};
+    use crate::model::load_model;
+    use crate::{Gpt2Config, Gpt2Model, Gpt2Tokenizer};
 
     let config = Gpt2Config {
         vocab_size: 50257,

@@ -1,43 +1,19 @@
 use crate::{data::Dataset, Gpt2Config, Gpt2Model, Gpt2Tokenizer};
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use burn::data::dataloader::batcher::Batcher;
 use burn::data::dataloader::{DataLoaderBuilder, Dataset as BurnDataset};
 use burn::optim::AdamConfig;
 use burn::prelude::*;
-use burn::record::{BinGzFileRecorder, CompactRecorder, FullPrecisionSettings};
+use burn::record::CompactRecorder;
 use burn::tensor::backend::AutodiffBackend;
 use burn::train::metric::state::{FormatOptions, NumericMetricState};
 use burn::train::metric::{Adaptor, Metric, MetricEntry, MetricMetadata};
 use burn::train::{LearnerBuilder, LearnerSummary, TrainOutput, TrainStep, ValidStep};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 // Type aliases for main.rs compatibility
 type WgpuBackend = burn::backend::wgpu::Wgpu;
 type WgpuAutodiffBackend = burn::backend::Autodiff<WgpuBackend>;
-
-/// Save model weights in binary format
-pub fn save_model<B: Backend>(model: &Gpt2Model<B>, path: impl AsRef<Path>) -> Result<()> {
-    let recorder = BinGzFileRecorder::<FullPrecisionSettings>::default();
-    model
-        .clone()
-        .save_file(path.as_ref().to_path_buf(), &recorder)
-        .map_err(|e| anyhow!("Failed to save model: {}", e))?;
-    Ok(())
-}
-
-/// Load model weights from binary format
-pub fn load_model<B: Backend>(
-    config: Gpt2Config,
-    path: impl AsRef<Path>,
-    device: &B::Device,
-) -> Result<Gpt2Model<B>> {
-    let mut model = Gpt2Model::new(config, device);
-    let recorder = CompactRecorder::new();
-    model = model
-        .load_file(path.as_ref().to_path_buf(), &recorder, device)
-        .map_err(|e| anyhow!("Failed to load model: {}", e))?;
-    Ok(model)
-}
 
 /// Training configuration using official Burn Config pattern
 #[derive(Config)]

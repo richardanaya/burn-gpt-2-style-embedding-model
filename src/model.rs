@@ -1,10 +1,13 @@
+use anyhow::{anyhow, Result};
 use burn::nn::{
     attention::{MultiHeadAttention, MultiHeadAttentionConfig},
     Dropout, DropoutConfig, Embedding, EmbeddingConfig, Initializer, LayerNorm, LayerNormConfig,
     Linear, LinearConfig,
 };
 use burn::prelude::*;
+use burn::record::{BinGzFileRecorder, CompactRecorder, FullPrecisionSettings};
 use burn::tensor::activation;
+use std::path::Path;
 
 /// Configuration for the GPT-2 model
 /// Based on GPT-2 117M parameters:
@@ -529,6 +532,66 @@ mod tests {
         assert_eq!(batch_size, 2);
         assert_eq!(d_model, 768);
     }
+}
+
+/// Save model weights in binary format
+///
+/// This function serializes the model's trained parameters to disk using Burn's
+/// binary format with gzip compression. The saved model can be loaded later
+/// using `load_model` function.
+///
+/// ## Parameters
+/// - `model`: Reference to the trained model to save
+/// - `path`: File path where to save the model (typically with .mpk extension)
+///
+/// ## File Format
+/// The model is saved in Burn's binary format with full precision settings,
+/// which preserves all model weights and parameters exactly as trained.
+pub fn save_model<B: Backend>(model: &Gpt2Model<B>, path: impl AsRef<Path>) -> Result<()> {
+    let recorder = BinGzFileRecorder::<FullPrecisionSettings>::default();
+    model
+        .clone()
+        .save_file(path.as_ref().to_path_buf(), &recorder)
+        .map_err(|e| anyhow!("Failed to save model: {}", e))?;
+    Ok(())
+}
+
+/// Load model weights from binary format
+///
+/// This function creates a new model with the given configuration and loads
+/// previously saved weights from disk. This is used to restore a trained model
+/// for inference or to continue training from a checkpoint.
+///
+/// ## Parameters
+/// - `config`: Model configuration (must match the configuration used when saving)
+/// - `path`: File path to the saved model file
+/// - `device`: Backend device where to load the model
+///
+/// ## Returns
+/// A `Gpt2Model` instance with loaded weights ready for inference
+///
+/// ## Example
+/// ```rust,no_run
+/// use burn_gpt_n_embedding_model::{Gpt2Config, load_model};
+/// # use anyhow::Result;
+/// # fn example() -> Result<()> {
+/// let config = Gpt2Config::default();
+/// let device = Default::default();
+/// let model = load_model(config, "trained_model.mpk", &device)?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn load_model<B: Backend>(
+    config: Gpt2Config,
+    path: impl AsRef<Path>,
+    device: &B::Device,
+) -> Result<Gpt2Model<B>> {
+    let mut model = Gpt2Model::new(config, device);
+    let recorder = CompactRecorder::new();
+    model = model
+        .load_file(path.as_ref().to_path_buf(), &recorder, device)
+        .map_err(|e| anyhow!("Failed to load model: {}", e))?;
+    Ok(model)
 }
 
 // Complex Burn training traits removed - using simpler manual training approach

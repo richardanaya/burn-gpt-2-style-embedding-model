@@ -1,4 +1,5 @@
-use crate::{load_model, Dataset, Gpt2Config, SimilarityCalculator};
+use crate::model::load_model;
+use crate::{Dataset, Gpt2Config, SimilarityCalculator};
 use anyhow::Result;
 use burn::prelude::*;
 use indicatif::{ProgressBar, ProgressStyle};
