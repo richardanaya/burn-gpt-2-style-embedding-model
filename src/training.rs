@@ -3,6 +3,7 @@ use crate::summary::print_educational_metrics_explanation;
 use crate::{data::Dataset, Gpt2Config, Gpt2Model, Gpt2Tokenizer};
 use anyhow::Result;
 use burn::data::dataloader::{DataLoaderBuilder, Dataset as BurnDataset};
+use burn::grad_clipping::GradientClippingConfig;
 use burn::optim::decay::WeightDecayConfig;
 use burn::optim::AdamConfig;
 use burn::prelude::*;
@@ -429,7 +430,7 @@ pub async fn train_model(
     // Create training configuration using the new Config pattern
     let config = TrainingConfig {
         model: model_config,
-        optimizer: AdamConfig::new().with_weight_decay(Some(WeightDecayConfig{ penalty: 0.01})),
+        optimizer: AdamConfig::new().with_weight_decay(Some(WeightDecayConfig{ penalty: 0.01})).with_grad_clipping(Some(GradientClippingConfig::Value(1.0))),
         num_epochs: epochs,
         batch_size,
         num_workers: 1,
