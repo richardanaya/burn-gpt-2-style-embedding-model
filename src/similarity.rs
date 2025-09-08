@@ -346,6 +346,77 @@ pub fn print_similarity_matrix(sentences: &[&str], matrix: &[Vec<f32>]) {
     }
 }
 
+/// Calculate similarity between two sentences using the CLI interface
+///
+/// This function provides a convenient CLI-friendly wrapper around the SimilarityCalculator
+/// for calculating similarity between two sentences. It handles model loading, tokenizer
+/// initialization, and provides formatted output for either basic cosine similarity or
+/// comprehensive metrics.
+///
+/// ## Parameters
+/// - `model_path`: Optional path to trained model (.mpk file). If None, uses random weights
+/// - `sentence1`: First sentence for comparison
+/// - `sentence2`: Second sentence for comparison  
+/// - `all_metrics`: If true, shows all similarity metrics; if false, shows only cosine similarity
+/// - Model architecture parameters (n_heads, n_layers, d_model, context_size)
+/// - `device`: WebGPU device for computation
+///
+/// ## Output Behavior
+/// - **all_metrics = false**: Shows cosine similarity only (0-1 scale)
+/// - **all_metrics = true**: Shows cosine, Euclidean, Manhattan, and dot product metrics
+pub async fn calculate_similarity<B: Backend<FloatElem = f32>>(
+    model_path: Option<&std::path::PathBuf>,
+    sentence1: &str,
+    sentence2: &str,
+    all_metrics: bool,
+    n_heads: usize,
+    n_layers: usize,
+    d_model: usize,
+    context_size: usize,
+    device: B::Device,
+) -> anyhow::Result<()> {
+    use crate::{load_model, Gpt2Config, Gpt2Model, Gpt2Tokenizer};
+
+    let config = Gpt2Config {
+        vocab_size: 50257,
+        max_seq_len: context_size,
+        d_model,
+        n_heads,
+        n_layers,
+        dropout: 0.1,
+    };
+    let model = if let Some(path) = model_path {
+        println!("Loading model from: {}", path.display());
+        load_model::<B>(config, path, &device)?
+    } else {
+        println!("Using randomly initialized model for demo");
+        Gpt2Model::new(config, &device)
+    };
+
+    let tokenizer = Gpt2Tokenizer::new_simple(context_size)?;
+
+    // Create similarity calculator
+    let calculator = SimilarityCalculator::new(model, tokenizer);
+
+    if all_metrics {
+        // Calculate all similarity metrics
+        let metrics = calculator.calculate_all_metrics(sentence1, sentence2)?;
+        metrics.print_formatted(sentence1, sentence2);
+    } else {
+        // Calculate just cosine similarity
+        let similarity = calculator.calculate_similarity(sentence1, sentence2)?;
+        println!("Sentences:");
+        println!("  1: \"{}\"", sentence1);
+        println!("  2: \"{}\"", sentence2);
+        println!(
+            "Cosine Similarity: {:.4} (0=different, 1=identical)",
+            similarity
+        );
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
