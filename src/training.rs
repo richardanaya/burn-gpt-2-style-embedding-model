@@ -37,7 +37,7 @@ pub struct TrainingConfig {
     #[config(default = 42)]
     pub seed: u64,
     /// Initial learning rate
-    #[config(default = 1.0e-4)]
+    #[config(default = 1.0e-5)]
     pub learning_rate: f64,
     /// Loss function to use
     #[config(default = "LossFunction::Contrastive")]
@@ -112,31 +112,30 @@ impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, RegressionOutput<B>> for Gp
 
         // Calculate squared Euclidean distance between embeddings
         let diff = emb1.clone() - emb2.clone();
-        let sq_dist = diff.powf_scalar(2.0).mean(); // shape [batch]
+        let sq_dist = diff.powf_scalar(2.0).mean_dim(1).squeeze_dims(&[1]); // [batch] - mean over hidden dim only
 
         // Labels are already f32, ensure they're on the same device
         let y = batch.labels.clone(); // [batch]
 
-        // Positive term: ½ * y * d²
+        // Calculate distance for margin
+        let dist = sq_dist.clone().sqrt();
+
+        // Contrastive loss: ½ * y * d² + ½ * (1−y) * max(0, margin − d)²
         let pos_loss = y.clone() * sq_dist.clone();
+        let neg_loss = (Tensor::<B, 1>::ones_like(&y) - y.clone()) * (self.margin - dist).clamp_min(0.0).powf_scalar(2.0);
+        let loss_tensor: Tensor<B, 1> = 0.5 * (pos_loss + neg_loss).mean();
 
-        // Negative term: ½ * (1−y) * max(0, margin − d)²
-        let dist = sq_dist.sqrt();
-        let margin_tensor = Tensor::<B, 1>::from_floats([self.margin], &emb1.device());
-        let neg_part = burn::tensor::activation::relu(margin_tensor - dist);
-        let neg_loss = (Tensor::<B, 1>::ones_like(&y) - y.clone()) * neg_part.powf_scalar(2.0);
-
-        // Total loss: ½ * (pos_loss + neg_loss)
-        let loss_tensor = (pos_loss + neg_loss).mean() * 0.5;
-
-        // Calculate cosine similarity as prediction for metrics
+        // Calculate cosine similarity as prediction for metrics (map to 0-1 range)
         let dot_product = (emb1.clone() * emb2.clone()).sum_dim(1);
         let norm1 = emb1.clone().powf_scalar(2.0).sum_dim(1).sqrt();
         let norm2 = emb2.powf_scalar(2.0).sum_dim(1).sqrt();
-        let predictions = dot_product / (norm1 * norm2 + 1e-8); // Add small epsilon to avoid division by zero
+        let cosine_sim = dot_product / (norm1 * norm2 + 1e-8);
+        // Map from [-1,1] to [0,1] range to match label scale
+        let predictions = (cosine_sim + 1.0) * 0.5;
 
+        let loss_value = loss_tensor.clone().squeeze_dims::<0>(&[0]).into_scalar();
         let output =
-            RegressionOutput::new(batch.labels, predictions.detach(), loss_tensor.clone().unsqueeze());
+            RegressionOutput::new(batch.labels, predictions.detach(), Tensor::<B, 2>::from_floats([[loss_value]], &emb1.device()));
         let grads = loss_tensor.backward();
         TrainOutput::new(self, grads, output)
     }
@@ -149,11 +148,13 @@ impl<B: Backend> ValidStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<
         let embeddings1 = self.get_sentence_embedding(batch.sentence1).detach();
         let embeddings2 = self.get_sentence_embedding(batch.sentence2).detach();
 
-        // Calculate cosine similarity as predictions (0-1 scale)
+        // Calculate cosine similarity as predictions (map to 0-1 scale)
         let dot_product = (embeddings1.clone() * embeddings2.clone()).sum_dim(1);
         let norm1 = embeddings1.clone().powf_scalar(2.0).sum_dim(1).sqrt();
         let norm2 = embeddings2.powf_scalar(2.0).sum_dim(1).sqrt();
-        let predictions = dot_product / (norm1 * norm2 + 1e-8); // Add small epsilon to avoid division by zero
+        let cosine_sim = dot_product / (norm1 * norm2 + 1e-8);
+        // Map from [-1,1] to [0,1] range to match label scale
+        let predictions = (cosine_sim + 1.0) * 0.5;
 
         // For validation, we don't have a separate loss tensor, so we use predictions as both
         RegressionOutput::new(batch.labels, predictions.clone(), predictions.unsqueeze())
@@ -291,25 +292,25 @@ pub fn parse_learning_rate_config(
     initial_lr: Option<f64>,
 ) -> (LearningRateScheduler, f64) {
     let (scheduler, auto_lr) = match scheduler_str.to_lowercase().as_str() {
-        "fixed" => (LearningRateScheduler::Fixed, 0.001),
+        "fixed" => (LearningRateScheduler::Fixed, 1e-5),
         "linear-decay" => (
-            LearningRateScheduler::LinearDecay { final_lr: 0.00001 },
-            0.01,
+            LearningRateScheduler::LinearDecay { final_lr: 1e-6 },
+            2e-5,
         ),
         "exponential-decay" => (
             LearningRateScheduler::ExponentialDecay { decay_rate: 0.95 },
-            0.005,
+            1.5e-5,
         ),
         "step-decay" => (
             LearningRateScheduler::StepDecay {
                 step_size: 3,
                 gamma: 0.5,
             },
-            0.01,
+            2e-5,
         ),
         "cosine-annealing" => (
-            LearningRateScheduler::CosineAnnealing { min_lr: 0.00001 },
-            0.01,
+            LearningRateScheduler::CosineAnnealing { min_lr: 1e-6 },
+            2e-5,
         ),
         _ => {
             eprintln!(
@@ -317,8 +318,8 @@ pub fn parse_learning_rate_config(
                 scheduler_str
             );
             (
-                LearningRateScheduler::CosineAnnealing { min_lr: 0.00001 },
-                0.01,
+                LearningRateScheduler::CosineAnnealing { min_lr: 1e-6 },
+                2e-5,
             )
         }
     };
