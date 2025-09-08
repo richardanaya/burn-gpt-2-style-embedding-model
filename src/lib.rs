@@ -2,6 +2,7 @@ pub mod data;
 pub mod embedding;
 pub mod model;
 pub mod similarity;
+pub mod summary;
 pub mod tokenizer;
 pub mod training;
 pub mod validation;
