@@ -129,10 +129,14 @@ impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, RegressionOutput<B>> for Gp
         // Total loss: ½ * (pos_loss + neg_loss)
         let loss_tensor = (pos_loss + neg_loss).mean() * 0.5;
 
-        // Get embeddings for output (detached for display purposes)
-        let embeddings1 = emb1.detach();
+        // Calculate cosine similarity as prediction for metrics
+        let dot_product = (emb1.clone() * emb2.clone()).sum_dim(1);
+        let norm1 = emb1.clone().powf_scalar(2.0).sum_dim(1).sqrt();
+        let norm2 = emb2.powf_scalar(2.0).sum_dim(1).sqrt();
+        let predictions = dot_product / (norm1 * norm2 + 1e-8); // Add small epsilon to avoid division by zero
+
         let output =
-            RegressionOutput::new(batch.labels, embeddings1, loss_tensor.clone().unsqueeze());
+            RegressionOutput::new(batch.labels, predictions.detach(), loss_tensor.clone().unsqueeze());
         let grads = loss_tensor.backward();
         TrainOutput::new(self, grads, output)
     }
@@ -151,7 +155,8 @@ impl<B: Backend> ValidStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<
         let norm2 = embeddings2.powf_scalar(2.0).sum_dim(1).sqrt();
         let predictions = dot_product / (norm1 * norm2 + 1e-8); // Add small epsilon to avoid division by zero
 
-        RegressionOutput::new(batch.labels, embeddings1, predictions.unsqueeze())
+        // For validation, we don't have a separate loss tensor, so we use predictions as both
+        RegressionOutput::new(batch.labels, predictions.clone(), predictions.unsqueeze())
     }
 }
 
