@@ -41,7 +41,7 @@ enum Commands {
         epochs: usize,
 
         /// Batch size for training
-        #[arg(short, long, default_value = "2")]
+        #[arg(short, long, default_value = "8")]
         batch_size: usize,
 
         /// Learning rate scheduler: fixed, linear-decay, exponential-decay, step-decay, cosine-annealing
@@ -131,7 +131,7 @@ enum Commands {
         validation_data: PathBuf,
 
         /// Batch size for validation (default: 4)
-        #[arg(short, long, default_value = "4")]
+        #[arg(short, long, default_value = "8")]
         batch_size: usize,
 
         /// Number of attention heads (default: 12)

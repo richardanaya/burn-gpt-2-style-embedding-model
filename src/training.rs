@@ -1,4 +1,4 @@
-use crate::{data::Dataset, metrics::SimilarityAccuracyMetric, Gpt2Config, Gpt2Model, Gpt2Tokenizer};
+use crate::{data::Dataset, Gpt2Config, Gpt2Model, Gpt2Tokenizer};
 use anyhow::Result;
 use burn::data::dataloader::batcher::Batcher;
 use burn::data::dataloader::{DataLoaderBuilder, Dataset as BurnDataset};
@@ -320,8 +320,6 @@ pub fn train_with_learner<B: AutodiffBackend>(
         .metric_valid_numeric(LearningRateMetric::new())
         .metric_train_numeric(LossMetric::new())
         .metric_valid_numeric(LossMetric::new())
-        .metric_train_numeric(SimilarityAccuracyMetric::new())
-        .metric_valid_numeric(SimilarityAccuracyMetric::new())
         .summary()
         .build(
             config.model.init::<B>(&device),
