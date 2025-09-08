@@ -1,4 +1,4 @@
-use crate::{data::Dataset, Gpt2Config, Gpt2Model, Gpt2Tokenizer};
+use crate::{data::Dataset, metrics::SimilarityAccuracyMetric, Gpt2Config, Gpt2Model, Gpt2Tokenizer};
 use anyhow::Result;
 use burn::data::dataloader::batcher::Batcher;
 use burn::data::dataloader::{DataLoaderBuilder, Dataset as BurnDataset};
@@ -6,12 +6,10 @@ use burn::optim::AdamConfig;
 use burn::prelude::*;
 use burn::record::CompactRecorder;
 use burn::tensor::backend::AutodiffBackend;
-use burn::train::metric::state::{FormatOptions, NumericMetricState};
-use burn::train::metric::{Adaptor, Metric, MetricEntry, MetricMetadata};
 use burn::train::{LearnerBuilder, LearnerSummary, TrainOutput, TrainStep, ValidStep};
-use burn_train::metric::{ LearningRateMetric, LossMetric};
-use burn_train::renderer::tui::TuiMetricsRenderer;
-use burn_train::TrainingInterrupter;
+use burn::train::metric::{ LearningRateMetric, LossMetric};
+use burn::train::renderer::tui::TuiMetricsRenderer;
+use burn::train::{RegressionOutput, TrainingInterrupter};
 use std::path::PathBuf;
 
 // Type aliases for main.rs compatibility
@@ -217,90 +215,10 @@ impl<B: Backend> Batcher<B, TrainingItem, TrainingBatch<B>> for TrainingBatcher 
     }
 }
 
-/// Training output containing loss - using RegressionOutput for compatibility
-pub type SimilarityLoss<B> = burn::train::RegressionOutput<B>;
-
-/// Input type for similarity accuracy metric
-pub struct SimilarityAccuracyInput<B: Backend> {
-    pub predictions: Tensor<B, 1>, // Model predictions (similarity scores)
-    pub targets: Tensor<B, 1>,     // True labels (0 or 1)
-}
-
-/// Custom accuracy metric for similarity prediction following official Burn pattern
-pub struct SimilarityAccuracyMetric<B: Backend> {
-    state: NumericMetricState,
-    _b: std::marker::PhantomData<B>,
-}
-
-impl<B: Backend> Default for SimilarityAccuracyMetric<B> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<B: Backend> SimilarityAccuracyMetric<B> {
-    pub fn new() -> Self {
-        Self {
-            state: NumericMetricState::default(),
-            _b: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<B: Backend> Metric for SimilarityAccuracyMetric<B> {
-    type Input = SimilarityAccuracyInput<B>;
-
-    fn name(&self) -> String {
-        "Similarity Accuracy".to_string()
-    }
-
-    fn update(&mut self, item: &Self::Input, _metadata: &MetricMetadata) -> MetricEntry {
-        let [batch_size] = item.predictions.dims();
-
-        // Convert predictions to binary (threshold at 0.5)
-        let predicted_labels = item.predictions.clone().greater_elem(0.5);
-        let true_labels = item.targets.clone().greater_elem(0.5);
-
-        // Count correct predictions
-        let correct = predicted_labels.equal(true_labels).int().sum();
-        let accuracy_value = correct.clone().into_scalar().elem::<f32>() as f64 / batch_size as f64;
-
-        self.state.update(
-            accuracy_value * 100.0, // Convert to percentage
-            batch_size,
-            FormatOptions::new(self.name()).precision(2).unit("%"),
-        )
-    }
-
-    fn clear(&mut self) {
-        self.state.reset()
-    }
-}
-
-impl<B: Backend> burn::train::metric::Numeric for SimilarityAccuracyMetric<B> {
-    fn value(&self) -> f64 {
-        self.state.value()
-    }
-}
-
-/// Adaptor to convert from RegressionOutput to SimilarityAccuracyInput
-impl<B: Backend> Adaptor<SimilarityAccuracyInput<B>> for SimilarityLoss<B> {
-    fn adapt(&self) -> SimilarityAccuracyInput<B> {
-        // Extract predictions and targets from the regression output
-        // For similarity task: output contains predictions, targets contain true labels
-        let predictions = self.output.clone().flatten::<1>(0, 1); // Flatten to 1D
-        let targets = self.targets.clone().flatten::<1>(0, 1); // Flatten to 1D
-
-        SimilarityAccuracyInput {
-            predictions,
-            targets,
-        }
-    }
-}
 
 /// Implement TrainStep for our Gpt2Model
-impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, SimilarityLoss<B>> for Gpt2Model<B> {
-    fn step(&self, batch: TrainingBatch<B>) -> TrainOutput<SimilarityLoss<B>> {
+impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<B> {
+    fn step(&self, batch: TrainingBatch<B>) -> TrainOutput<RegressionOutput<B>> {
         // Forward pass - get embeddings
         let embeddings1 = self.get_sentence_embedding(batch.sentence1);
         let embeddings2 = self.get_sentence_embedding(batch.sentence2);
@@ -310,15 +228,15 @@ impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, SimilarityLoss<B>> for Gpt2
         let loss_tensor = diff.powf_scalar(2.0).mean_dim(1).mean();
 
         let output =
-            SimilarityLoss::new(batch.labels, embeddings1, loss_tensor.clone().unsqueeze());
+            RegressionOutput::new(batch.labels, embeddings1, loss_tensor.clone().unsqueeze());
         let grads = loss_tensor.backward();
         TrainOutput::new(self, grads, output)
     }
 }
 
 /// Implement ValidStep for validation
-impl<B: Backend> ValidStep<TrainingBatch<B>, SimilarityLoss<B>> for Gpt2Model<B> {
-    fn step(&self, batch: TrainingBatch<B>) -> SimilarityLoss<B> {
+impl<B: Backend> ValidStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<B> {
+    fn step(&self, batch: TrainingBatch<B>) -> RegressionOutput<B> {
         // Forward pass without gradients for validation
         let embeddings1 = self.get_sentence_embedding(batch.sentence1).detach();
         let embeddings2 = self.get_sentence_embedding(batch.sentence2).detach();
@@ -327,7 +245,7 @@ impl<B: Backend> ValidStep<TrainingBatch<B>, SimilarityLoss<B>> for Gpt2Model<B>
         let diff = embeddings1.clone() - embeddings2;
         let predictions = diff.powf_scalar(2.0).mean_dim(1);
 
-        SimilarityLoss::new(batch.labels, embeddings1, predictions.unsqueeze())
+        RegressionOutput::new(batch.labels, embeddings1, predictions.unsqueeze())
     }
 }
 
@@ -427,78 +345,6 @@ pub fn train_with_learner<B: AutodiffBackend>(
         .expect("Trained model should be saved successfully");
 
     println!("💾 Model saved to: {}/model", artifact_dir);
-}
-
-/// Pre-tokenized validation data (CPU-only to save GPU memory)
-#[derive(Debug)]
-#[allow(dead_code)]
-struct TokenizedValidationBatch {
-    padded1: Vec<i64>,
-    padded2: Vec<i64>,
-    max_len1: usize,
-    max_len2: usize,
-    labels: Vec<f32>,
-}
-
-/// Preprocess validation dataset once - keep on CPU to avoid GPU OOM
-#[allow(dead_code)]
-fn preprocess_validation_data_cpu(
-    tokenizer: &Gpt2Tokenizer,
-    val_dataset: &Dataset,
-    batch_size: usize,
-) -> Vec<TokenizedValidationBatch> {
-    let val_batches = val_dataset.batches(batch_size);
-    let mut preprocessed_batches = Vec::new();
-
-    for batch_examples in val_batches.iter() {
-        let mut sentence1_ids = Vec::new();
-        let mut sentence2_ids = Vec::new();
-        let mut labels = Vec::new();
-
-        for example in batch_examples.iter() {
-            if let (Ok(tokens1), Ok(tokens2)) = (
-                tokenizer.encode(&example.sentence1, true),
-                tokenizer.encode(&example.sentence2, true),
-            ) {
-                sentence1_ids.push(tokens1);
-                sentence2_ids.push(tokens2);
-                labels.push(example.label as f32);
-            }
-        }
-
-        if sentence1_ids.is_empty() {
-            continue;
-        }
-
-        // Pad sequences
-        let max_len1 = sentence1_ids.iter().map(|s| s.len()).max().unwrap_or(0);
-        let max_len2 = sentence2_ids.iter().map(|s| s.len()).max().unwrap_or(0);
-
-        let mut padded1 = Vec::new();
-        let mut padded2 = Vec::new();
-
-        for tokens in sentence1_ids {
-            let mut padded = tokens.clone();
-            padded.resize(max_len1, 0);
-            padded1.extend(padded.iter().map(|&x| x as i64));
-        }
-
-        for tokens in sentence2_ids {
-            let mut padded = tokens.clone();
-            padded.resize(max_len2, 0);
-            padded2.extend(padded.iter().map(|&x| x as i64));
-        }
-
-        preprocessed_batches.push(TokenizedValidationBatch {
-            padded1,
-            padded2,
-            max_len1,
-            max_len2,
-            labels,
-        });
-    }
-
-    preprocessed_batches
 }
 
 impl LearningRateScheduler {
