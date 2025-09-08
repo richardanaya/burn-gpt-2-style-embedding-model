@@ -10,5 +10,5 @@ pub use similarity::*;
 pub use tokenizer::*;
 pub use training::{
     load_model, train_model, train_with_learner, BurnTrainingDataset, LearningRateScheduler,
-    LegacyTrainingConfig, LossFunction, SimilarityAccuracyMetric, TrainingConfig,
+    LossFunction, SimilarityAccuracyMetric, TrainingConfig,
 };
