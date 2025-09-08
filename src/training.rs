@@ -3,6 +3,7 @@ use crate::summary::print_educational_metrics_explanation;
 use crate::{data::Dataset, Gpt2Config, Gpt2Model, Gpt2Tokenizer};
 use anyhow::Result;
 use burn::data::dataloader::{DataLoaderBuilder, Dataset as BurnDataset};
+use burn::optim::decay::WeightDecayConfig;
 use burn::optim::AdamConfig;
 use burn::prelude::*;
 use burn::record::CompactRecorder;
@@ -133,9 +134,8 @@ impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, RegressionOutput<B>> for Gp
         // Map from [-1,1] to [0,1] range to match label scale
         let predictions = (cosine_sim + 1.0) * 0.5;
 
-        let loss_value = loss_tensor.clone().squeeze_dims::<0>(&[0]).into_scalar();
         let output =
-            RegressionOutput::new(batch.labels, predictions.detach(), Tensor::<B, 2>::from_floats([[loss_value]], &emb1.device()));
+            RegressionOutput::new(batch.labels, predictions.detach(), loss_tensor.clone().unsqueeze());
         let grads = loss_tensor.backward();
         TrainOutput::new(self, grads, output)
     }
@@ -429,7 +429,7 @@ pub async fn train_model(
     // Create training configuration using the new Config pattern
     let config = TrainingConfig {
         model: model_config,
-        optimizer: AdamConfig::new(),
+        optimizer: AdamConfig::new().with_weight_decay(Some(WeightDecayConfig{ penalty: 0.01})),
         num_epochs: epochs,
         batch_size,
         num_workers: 1,
