@@ -55,6 +55,39 @@ impl Gpt2Tokenizer {
         Ok(ids)
     }
 
+    /// Tokenize a single text string into token IDs with length information for masking
+    pub fn encode_with_length(&self, text: &str, add_special_tokens: bool) -> Result<(Vec<u32>, usize)> {
+        let encoding = self
+            .tokenizer
+            .encode(text, add_special_tokens)
+            .map_err(|e| anyhow!("Failed to encode text: {}", e))?;
+        let mut ids = encoding.get_ids().to_vec();
+
+        // Store original length before padding/truncation
+        // Ensure minimum length of 1 to avoid empty sequences
+        let original_length = ids.len().max(1).min(self.max_length);
+
+        // Truncate if necessary
+        if ids.len() > self.max_length {
+            ids.truncate(self.max_length);
+        }
+
+        // If no tokens were generated, add a default token (e.g., unknown token or padding)
+        if ids.is_empty() {
+            let pad_token = self.tokenizer.get_padding().map(|p| p.pad_id).unwrap_or(0);
+            ids.push(pad_token);
+        }
+
+        // Pad if necessary (use pad token ID if available, otherwise use 0)
+        let pad_token = self.tokenizer.get_padding().map(|p| p.pad_id).unwrap_or(0);
+
+        while ids.len() < self.max_length {
+            ids.push(pad_token);
+        }
+
+        Ok((ids, original_length))
+    }
+
     /// Decode token IDs back to text
     pub fn decode(&self, ids: &[u32], skip_special_tokens: bool) -> Result<String> {
         let text = self
@@ -93,6 +126,40 @@ impl Gpt2Tokenizer {
         Ok(result)
     }
 
+    /// Tokenize multiple texts with length information for masking
+    pub fn encode_batch_with_lengths(&self, texts: &[&str], add_special_tokens: bool) -> Result<(Vec<Vec<u32>>, Vec<usize>)> {
+        let encodings = self
+            .tokenizer
+            .encode_batch(texts.to_vec(), add_special_tokens)
+            .map_err(|e| anyhow!("Failed to encode batch: {}", e))?;
+        let mut result_ids = Vec::new();
+        let mut result_lengths = Vec::new();
+
+        for encoding in encodings {
+            let mut ids = encoding.get_ids().to_vec();
+            
+            // Store original length before padding/truncation
+            let original_length = ids.len().min(self.max_length);
+
+            // Truncate if necessary
+            if ids.len() > self.max_length {
+                ids.truncate(self.max_length);
+            }
+
+            // Pad if necessary
+            let pad_token = self.tokenizer.get_padding().map(|p| p.pad_id).unwrap_or(0);
+
+            while ids.len() < self.max_length {
+                ids.push(pad_token);
+            }
+
+            result_ids.push(ids);
+            result_lengths.push(original_length);
+        }
+
+        Ok((result_ids, result_lengths))
+    }
+
     /// Get vocabulary size
     pub fn vocab_size(&self) -> usize {
         self.tokenizer.get_vocab_size(false)
@@ -101,6 +168,11 @@ impl Gpt2Tokenizer {
     /// Get max sequence length
     pub fn max_length(&self) -> usize {
         self.max_length
+    }
+
+    /// Get the padding token ID
+    pub fn pad_token_id(&self) -> u32 {
+        self.tokenizer.get_padding().map(|p| p.pad_id).unwrap_or(0)
     }
 }
 

@@ -34,6 +34,7 @@ pub struct TrainingConfig {
 
 impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<B> {
     fn step(&self, batch: TrainingBatch<B>) -> TrainOutput<RegressionOutput<B>> {
+        // TODO: Switch back to masked embeddings once tensor dimension issues are resolved
         let emb1 = self.get_sentence_embedding(batch.sentence1.clone());
         let emb2 = self.get_sentence_embedding(batch.sentence2.clone());
 
@@ -69,10 +70,11 @@ predictions.detach().unsqueeze(),  // Make it 2D [batch_size, 1]
 
 impl<B: Backend> ValidStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<B> {
     fn step(&self, batch: TrainingBatch<B>) -> RegressionOutput<B> {
+        // TODO: Switch back to masked embeddings once tensor dimension issues are resolved
         let embeddings1 = self.get_sentence_embedding(batch.sentence1).detach();
         let embeddings2 = self.get_sentence_embedding(batch.sentence2).detach();
 
-        let labels = &batch.labels;
+        let _labels = &batch.labels;
 
 // Contrastive loss
         let diff = embeddings1.clone() - embeddings2.clone();
@@ -538,9 +540,7 @@ use burn::data::dataloader::DataLoaderBuilder;
         margin: f32,
     ) -> Tensor<B, 1> {
         let diff = emb1.clone() - emb2.clone();
-let sq_dist = diff.powf_scalar(2.0).sum_dim(1).squeeze_dims(&[1]);
-queeze_dims(&[1]);
-queeze_dims(&[1]);
+        let sq_dist = diff.powf_scalar(2.0).sum_dim(1).squeeze_dims(&[1]);
         let dist = sq_dist.clone().sqrt();
 
         let pos_loss = labels.clone() * sq_dist.clone();

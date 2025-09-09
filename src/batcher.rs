@@ -2,12 +2,16 @@ use crate::Gpt2Tokenizer;
 use burn::data::dataloader::batcher::Batcher;
 use burn::prelude::*;
 
-/// Batch item for the Burn training system
+/// Batch item for the Burn training system with sequence length tracking for masking
 #[derive(Clone, Debug)]
 pub struct TrainingBatch<B: Backend> {
     pub sentence1: Tensor<B, 2, Int>,
     pub sentence2: Tensor<B, 2, Int>,
     pub labels: Tensor<B, 1>,
+    /// Original lengths of sentence1 before padding (for masking)
+    pub sentence1_lengths: Vec<usize>,
+    /// Original lengths of sentence2 before padding (for masking)
+    pub sentence2_lengths: Vec<usize>,
 }
 
 impl<B: Backend> TrainingBatch<B> {
@@ -15,11 +19,15 @@ impl<B: Backend> TrainingBatch<B> {
         sentence1: Tensor<B, 2, Int>,
         sentence2: Tensor<B, 2, Int>,
         labels: Tensor<B, 1>,
+        sentence1_lengths: Vec<usize>,
+        sentence2_lengths: Vec<usize>,
     ) -> Self {
         Self {
             sentence1,
             sentence2,
             labels,
+            sentence1_lengths,
+            sentence2_lengths,
         }
     }
 }
@@ -58,16 +66,20 @@ impl<B: Backend> Batcher<B, TrainingItem, TrainingBatch<B>> for TrainingBatcher 
     fn batch(&self, items: Vec<TrainingItem>, device: &B::Device) -> TrainingBatch<B> {
         let mut sentence1_ids = Vec::new();
         let mut sentence2_ids = Vec::new();
+        let mut sentence1_lengths = Vec::new();
+        let mut sentence2_lengths = Vec::new();
         let mut labels = Vec::new();
 
-        // Tokenize all sentences
+        // Tokenize all sentences and track original lengths
         for item in items {
-            if let (Ok(tokens1), Ok(tokens2)) = (
-                self.tokenizer.encode(&item.sentence1, true),
-                self.tokenizer.encode(&item.sentence2, true),
+            if let (Ok((tokens1, len1)), Ok((tokens2, len2))) = (
+                self.tokenizer.encode_with_length(&item.sentence1, true),
+                self.tokenizer.encode_with_length(&item.sentence2, true),
             ) {
                 sentence1_ids.push(tokens1);
                 sentence2_ids.push(tokens2);
+                sentence1_lengths.push(len1);
+                sentence2_lengths.push(len2);
                 labels.push(item.label);
             }
         }
@@ -77,27 +89,21 @@ impl<B: Backend> Batcher<B, TrainingItem, TrainingBatch<B>> for TrainingBatcher 
             panic!("All items in batch failed tokenization. This indicates a problem with the input data or tokenizer configuration. Check your dataset for malformed entries.");
         }
 
-        // Pad sequences
-        let max_len1 = sentence1_ids.iter().map(|s| s.len()).max().unwrap_or(0);
-        let max_len2 = sentence2_ids.iter().map(|s| s.len()).max().unwrap_or(0);
+        // Note: The tokenizer's encode_with_length already handles padding to max_length,
+        // so all sequences should have the same length already
+        let max_len1 = sentence1_ids[0].len(); // All should be same length due to padding
+        let max_len2 = sentence2_ids[0].len(); // All should be same length due to padding
 
         let batch_size = sentence1_ids.len();
         let mut padded_sentence1 = Vec::with_capacity(batch_size * max_len1);
         let mut padded_sentence2 = Vec::with_capacity(batch_size * max_len2);
 
-        // GPT-2 pad token ID is 50256, not 0 (which is a valid BPE token)
-        const PAD_TOKEN_ID: u32 = 50256;
-
         for seq in sentence1_ids.iter() {
-            let mut padded = seq.clone();
-            padded.resize(max_len1, PAD_TOKEN_ID);
-            padded_sentence1.extend(padded.iter().map(|&x| x as i64));
+            padded_sentence1.extend(seq.iter().map(|&x| x as i64));
         }
 
         for seq in sentence2_ids.iter() {
-            let mut padded = seq.clone();
-            padded.resize(max_len2, PAD_TOKEN_ID);
-            padded_sentence2.extend(padded.iter().map(|&x| x as i64));
+            padded_sentence2.extend(seq.iter().map(|&x| x as i64));
         }
 
         let sentence1_tensor =
@@ -110,6 +116,12 @@ impl<B: Backend> Batcher<B, TrainingItem, TrainingBatch<B>> for TrainingBatcher 
 
         let labels_tensor = Tensor::<B, 1>::from_data(TensorData::from(&labels[..]), device);
 
-        TrainingBatch::new(sentence1_tensor, sentence2_tensor, labels_tensor)
+        TrainingBatch::new(
+            sentence1_tensor, 
+            sentence2_tensor, 
+            labels_tensor,
+            sentence1_lengths,
+            sentence2_lengths,
+        )
     }
 }

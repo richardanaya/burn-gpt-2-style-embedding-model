@@ -56,7 +56,8 @@ pub async fn embed_sentence<B: Backend<FloatElem = f32>>(
 
     let tokenizer = Gpt2Tokenizer::new_simple(context_size)?;
 
-    // Get embedding
+    // Get embedding - for now using regular method to avoid tensor dimension issues
+    // TODO: Switch back to masked version once tensor dimension issues are resolved
     let token_ids = tokenizer.encode(sentence, true)?;
     let input_tensor = Tensor::<B, 1, Int>::from_data(
         TensorData::from(&token_ids.iter().map(|&x| x as i64).collect::<Vec<_>>()[..]),
@@ -125,6 +126,7 @@ pub async fn embed_sentences<B: Backend<FloatElem = f32>>(
     let mut embeddings = Vec::new();
 
     for sentence in sentences {
+        // TODO: Switch back to masked version once tensor dimension issues are resolved
         let token_ids = tokenizer.encode(sentence, true)?;
         let input_tensor = Tensor::<B, 1, Int>::from_data(
             TensorData::from(&token_ids.iter().map(|&x| x as i64).collect::<Vec<_>>()[..]),

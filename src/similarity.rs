@@ -216,7 +216,8 @@ impl<B: Backend<FloatElem = f32>> SimilarityCalculator<B> {
     /// The resulting embedding captures the overall semantic content: a peaceful,
     /// positive scene involving an animal at rest.
     fn get_sentence_embedding(&self, sentence: &str) -> Result<Tensor<B, 1>> {
-        // Tokenize the sentence: Convert human text to token IDs
+        // TODO: Switch back to masked version once tensor dimension issues are resolved
+        // Tokenize the sentence
         let token_ids = self.tokenizer.encode(sentence, true)?;
 
         // Get a device from one of the model's parameters
@@ -229,10 +230,9 @@ impl<B: Backend<FloatElem = f32>> SimilarityCalculator<B> {
         )
         .unsqueeze_dim(0);
 
-        // Get sentence embedding: This calls model.forward() internally to process through
-        // all 12 transformer layers, then applies mean pooling to get a single sentence vector
+        // Get sentence embedding using regular mean pooling
         let sentence_embedding = self.model.get_sentence_embedding(input_tensor);
-        // sentence_embedding is now [batch_size, d_model] - no need to squeeze seq dimension
+        // sentence_embedding is now [batch_size, d_model]
 
         // Remove batch dimension to get final sentence embedding vector [d_model]
         let result: Tensor<B, 1> = sentence_embedding.squeeze_dims(&[0]);
