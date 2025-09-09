@@ -145,7 +145,7 @@ pub async fn train_model(
         d_model,
         n_heads,
         n_layers,
-        dropout: 0.3, // Increased from 0.1 for better regularization
+        dropout: 0.4,
         margin: 1.0, // default for contrastive loss
     };
 

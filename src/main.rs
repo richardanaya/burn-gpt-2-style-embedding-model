@@ -41,23 +41,23 @@ enum Commands {
         batch_size: usize,
 
         /// Initial learning rate
-        #[arg(long, default_value = "1e-3")]
+        #[arg(long, default_value = "1e-5")]
         initial_lr: f64,
 
         /// Number of attention heads (default: 12)
-        #[arg(long, default_value = "12")]
+        #[arg(long, default_value = "4")]
         n_heads: usize,
 
         /// Number of transformer layers (default: 12)
-        #[arg(long, default_value = "12")]
+        #[arg(long, default_value = "4")]
         n_layers: usize,
 
-        /// Embedding dimension size (default: 768)
-        #[arg(long, default_value = "768")]
+        /// Embedding dimension size (default: 256)
+        #[arg(long, default_value = "256")]
         d_model: usize,
 
         /// Maximum sequence length / context size (default: 1024)
-        #[arg(long, default_value = "1024")]
+        #[arg(long, default_value = "256")]
         context_size: usize,
 
         /// Limit training examples for testing (0 = no limit)

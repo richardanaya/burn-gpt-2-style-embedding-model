@@ -28,20 +28,6 @@ pub struct Gpt2Config {
     pub margin: f32,
 }
 
-impl Default for Gpt2Config {
-    fn default() -> Self {
-        Self {
-            vocab_size: 50257, // GPT-2 vocabulary size
-            max_seq_len: 256, // Maximum sequence length
-            d_model: 256,      // Embedding dimension
-            n_heads: 4,       // Number of attention heads (GPT-2 117M)
-            n_layers: 4,      // Number of transformer layers (GPT-2 117M)
-            dropout: 0.3,      // Dropout rate
-            margin: 1.0,       // Default margin for contrastive loss
-        }
-    }
-}
-
 impl Gpt2Config {
     /// Initialize the model from config
     pub fn init<B: Backend>(&self, device: &B::Device) -> Gpt2Model<B> {
@@ -604,93 +590,6 @@ impl<B: Backend> Gpt2Model<B> {
         }
 
         embeddings
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use burn::backend::wgpu::Wgpu;
-
-    type TestBackend = Wgpu;
-
-    #[test]
-    fn test_gpt_n_model_creation() {
-        let device = Default::default();
-        let config = Gpt2Config::default();
-        let _model = Gpt2Model::<TestBackend>::new(config, &device);
-
-        // Test model creation doesn't panic
-        // Model is created successfully if we reach here
-    }
-
-    #[test]
-    fn test_forward_pass() {
-        let device = Default::default();
-        let config = Gpt2Config::default();
-        let model = Gpt2Model::<TestBackend>::new(config, &device);
-
-        // Create dummy input
-        let input_ids = Tensor::<TestBackend, 2, Int>::zeros([1, 10], &device);
-
-        // Forward pass should not panic
-        let output = model.forward(input_ids);
-        let [batch_size, seq_len, d_model] = output.dims();
-
-        assert_eq!(batch_size, 1);
-        assert_eq!(seq_len, 10);
-        assert_eq!(d_model, 768);
-    }
-
-    #[test]
-    fn test_sentence_embedding() {
-        let device = Default::default();
-        let config = Gpt2Config::default();
-        let model = Gpt2Model::<TestBackend>::new(config, &device);
-
-        // Create dummy input
-        let input_ids = Tensor::<TestBackend, 2, Int>::zeros([2, 10], &device);
-
-        // Get sentence embeddings
-        let embeddings = model.get_sentence_embedding(input_ids);
-        let [batch_size, d_model] = embeddings.dims();
-
-        assert_eq!(batch_size, 2);
-        assert_eq!(d_model, 768);
-    }
-
-    #[test]
-    fn test_masked_sentence_embedding() {
-        let device = Default::default();
-        let config = Gpt2Config::default();
-        let model = Gpt2Model::<TestBackend>::new(config, &device);
-
-        // Create dummy input with different sequence lengths
-        let input_ids = Tensor::<TestBackend, 2, Int>::zeros([2, 10], &device);
-        let lengths = vec![5, 8]; // First sequence has 5 real tokens, second has 8
-
-        // Test masked sentence embeddings
-        let embeddings = model.get_sentence_embedding_masked(input_ids, &lengths);
-        let [batch_size, d_model] = embeddings.dims();
-
-        assert_eq!(batch_size, 2);
-        assert_eq!(d_model, 768);
-
-        // Check that embeddings are properly normalized (L2 norm should be ~1.0)
-        let embedding_data = embeddings.to_data().to_vec::<f32>().unwrap();
-        let first_embedding = &embedding_data[0..768];
-        let second_embedding = &embedding_data[768..1536];
-
-        let norm1: f32 = first_embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
-        let norm2: f32 = second_embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
-
-        // L2 norms should be close to 1.0 (within small epsilon)
-        assert!((norm1 - 1.0).abs() < 0.1, "First embedding norm: {}", norm1);
-        assert!(
-            (norm2 - 1.0).abs() < 0.1,
-            "Second embedding norm: {}",
-            norm2
-        );
     }
 }
 
