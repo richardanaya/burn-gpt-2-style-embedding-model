@@ -56,9 +56,9 @@ impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, RegressionOutput<B>> for Gp
         let predictions = (cosine_sim + 1.0) * 0.5;
 
         let output = RegressionOutput::new(
-            batch.labels,
-            predictions.detach(),
-            loss_tensor.clone().unsqueeze(),
+            loss_tensor.clone(),
+            predictions.detach().unsqueeze(),  // Make it 2D [batch_size, 1] 
+            batch.labels.unsqueeze(),          // Make it 2D [batch_size, 1]
         );
         let grads = loss_tensor.backward();
         TrainOutput::new(self, grads, output)
@@ -89,7 +89,7 @@ impl<B: Backend> ValidStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<
         let cosine_sim = dot_product / (norm1 * norm2 + 1e-8);
         let predictions = (cosine_sim + 1.0) * 0.5;
 
-        RegressionOutput::new(y, predictions, valid_loss)
+        RegressionOutput::new(valid_loss, predictions.unsqueeze(), y.unsqueeze())
     }
 }
 
