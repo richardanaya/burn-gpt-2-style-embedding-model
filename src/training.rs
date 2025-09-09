@@ -37,30 +37,30 @@ impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, RegressionOutput<B>> for Gp
         let emb1 = self.get_sentence_embedding(batch.sentence1.clone());
         let emb2 = self.get_sentence_embedding(batch.sentence2.clone());
 
-        // L2 distance components
-        let diff = &emb1 - &emb2;
-        let sq_dist = diff.powf_scalar(2.0).mean_dim(1).squeeze_dims(&[1]);
-        let dist = sq_dist.sqrt();
+// L2 distance components (use true squared L2, no per-dim mean)
+        let diff = emb1.clone() - emb2.clone();
+let sq_dist = diff.powf_scalar(2.0).sum_dim(1).squeeze_dims(&[1]);
+        let dist = sq_dist.clone().sqrt();
 
-        // Labels (borrowed, no clone unless needed later)
-        let labels = &batch.labels;
+        // Labels (owned)
+        let y = batch.labels.clone();
 
-        let pos_loss = labels * &sq_dist;
-        let neg_loss = (Tensor::<B, 1>::ones_like(labels) - labels)
+        let pos_loss = y.clone() * sq_dist.clone();
+        let neg_loss = (Tensor::<B, 1>::ones_like(&y) - y.clone())
             * (self.margin - dist).clamp_min(0.0).powf_scalar(2.0);
         let loss_tensor: Tensor<B, 1> = 0.5 * (pos_loss + neg_loss).mean();
 
         // Cosine similarity for metrics
-        let dot_product = (&emb1 * &emb2).sum_dim(1);
-        let norm1 = emb1.powf_scalar(2.0).sum_dim(1).sqrt();
+        let dot_product = (emb1.clone() * emb2.clone()).sum_dim(1);
+        let norm1 = emb1.clone().powf_scalar(2.0).sum_dim(1).sqrt();
         let norm2 = emb2.powf_scalar(2.0).sum_dim(1).sqrt();
         let cosine_sim = dot_product / (norm1 * norm2 + 1e-8);
         let predictions = (cosine_sim + 1.0) * 0.5;
 
         let output = RegressionOutput::new(
             loss_tensor.clone(),
-            predictions.detach().unsqueeze(),  // Make it 2D [batch_size, 1] 
-            batch.labels.unsqueeze(),          // Make it 2D [batch_size, 1]
+predictions.detach().unsqueeze(),  // Make it 2D [batch_size, 1] 
+            y.unsqueeze(),          // Make it 2D [batch_size, 1]
         );
         let grads = loss_tensor.backward();
         TrainOutput::new(self, grads, output)
@@ -74,19 +74,20 @@ impl<B: Backend> ValidStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<
 
         let labels = &batch.labels;
 
-        // Contrastive loss
-        let diff = &embeddings1 - &embeddings2;
-        let sq_dist = diff.powf_scalar(2.0).mean_dim(1).squeeze_dims(&[1]);
-        let dist = sq_dist.sqrt();
+// Contrastive loss
+        let diff = embeddings1.clone() - embeddings2.clone();
+let sq_dist = diff.powf_scalar(2.0).sum_dim(1).squeeze_dims(&[1]);
+        let dist = sq_dist.clone().sqrt();
 
-        let pos_loss = labels * &sq_dist;
-        let neg_loss = (Tensor::<B, 1>::ones_like(labels) - labels)
+        let y = batch.labels.clone();
+        let pos_loss = y.clone() * sq_dist.clone();
+        let neg_loss = (Tensor::<B, 1>::ones_like(&y) - y.clone())
             * (self.margin - dist).clamp_min(0.0).powf_scalar(2.0);
         let valid_loss = 0.5 * (pos_loss + neg_loss).mean().unsqueeze();
 
         // Predictions (cosine similarity)
-        let dot_product = (&embeddings1 * &embeddings2).sum_dim(1);
-        let norm1 = embeddings1.powf_scalar(2.0).sum_dim(1).sqrt();
+        let dot_product = (embeddings1.clone() * embeddings2.clone()).sum_dim(1);
+        let norm1 = embeddings1.clone().powf_scalar(2.0).sum_dim(1).sqrt();
         let norm2 = embeddings2.powf_scalar(2.0).sum_dim(1).sqrt();
         let cosine_sim = dot_product / (norm1 * norm2 + 1e-8);
         let predictions = (cosine_sim + 1.0) * 0.5;
@@ -537,7 +538,9 @@ use burn::data::dataloader::DataLoaderBuilder;
         margin: f32,
     ) -> Tensor<B, 1> {
         let diff = emb1.clone() - emb2.clone();
-        let sq_dist = diff.powf_scalar(2.0).mean_dim(1).squeeze_dims(&[1]);
+let sq_dist = diff.powf_scalar(2.0).sum_dim(1).squeeze_dims(&[1]);
+queeze_dims(&[1]);
+queeze_dims(&[1]);
         let dist = sq_dist.clone().sqrt();
 
         let pos_loss = labels.clone() * sq_dist.clone();
