@@ -143,7 +143,6 @@ pub async fn train_model(
 
     let dataloader_test = DataLoaderBuilder::new(batcher)
         .batch_size(config.batch_size)
-        .shuffle(config.seed)
         .num_workers(config.num_workers)
         .build(burn_validation_dataset.clone());
 
