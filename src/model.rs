@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use burn::nn::{
-    attention::{MultiHeadAttention, MultiHeadAttentionConfig, MhaInput},
+    attention::{MhaInput, MultiHeadAttention, MultiHeadAttentionConfig},
     Dropout, DropoutConfig, Embedding, EmbeddingConfig, Initializer, LayerNorm, LayerNormConfig,
     Linear, LinearConfig,
 };
@@ -170,25 +170,29 @@ impl<B: Backend> TransformerBlock<B> {
     }
 
     /// Forward pass through the transformer block with optional padding mask
-    /// 
+    ///
     /// ## Attention Masking in Transformers
-    /// 
+    ///
     /// The padding mask ensures that attention mechanisms ignore padding tokens,
     /// preventing the model from learning spurious relationships with pad tokens.
-    /// 
+    ///
     /// **Without masking**: Model treats padding tokens as real content
     /// **With masking**: Model only attends to actual sentence content
-    pub fn forward_with_mask(&self, x: Tensor<B, 3>, padding_mask: Option<Tensor<B, 2, Bool>>) -> Tensor<B, 3> {
+    pub fn forward_with_mask(
+        &self,
+        x: Tensor<B, 3>,
+        padding_mask: Option<Tensor<B, 2, Bool>>,
+    ) -> Tensor<B, 3> {
         // Pre-normalization variant used in GPT-2
         // Self-attention with residual connection
         let normed = self.norm_1.forward(x.clone());
         let mut mha_input = MhaInput::self_attn(normed);
-        
+
         // Apply padding mask if provided
         if let Some(mask) = padding_mask {
             mha_input = mha_input.mask_pad(mask);
         }
-        
+
         let attended = self.attention.forward(mha_input);
         let x = x + attended.context;
 
@@ -213,21 +217,25 @@ pub struct Gpt2Model<B: Backend> {
 
 impl<B: Backend> Gpt2Model<B> {
     /// Create a padding mask from sequence lengths
-    /// 
+    ///
     /// ## Creating Padding Masks
-    /// 
+    ///
     /// A padding mask is a boolean tensor where:
     /// - `true` indicates a real token that should be attended to
     /// - `false` indicates a padding token that should be ignored
-    /// 
+    ///
     /// Example: For sequences ["hello world", "hi"] with max_length=4:
     /// - Tokenized: [[1, 2, 0, 0], [3, 0, 0, 0]] (0 = padding)
     /// - Lengths: [2, 1]
     /// - Mask: [[true, true, false, false], [true, false, false, false]]
-    pub fn create_padding_mask(lengths: &[usize], max_length: usize, device: &B::Device) -> Tensor<B, 2, Bool> {
+    pub fn create_padding_mask(
+        lengths: &[usize],
+        max_length: usize,
+        device: &B::Device,
+    ) -> Tensor<B, 2, Bool> {
         let batch_size = lengths.len();
         let mut mask_data = vec![false; batch_size * max_length];
-        
+
         for (batch_idx, &length) in lengths.iter().enumerate() {
             // Ensure we don't have zero-length sequences and handle edge cases
             let actual_length = length.max(1).min(max_length); // At least 1, at most max_length
@@ -235,10 +243,10 @@ impl<B: Backend> Gpt2Model<B> {
                 mask_data[batch_idx * max_length + pos] = true;
             }
         }
-        
+
         Tensor::from_bool(
             burn::tensor::TensorData::new(mask_data, [batch_size, max_length]),
-            device
+            device,
         )
     }
 
@@ -401,18 +409,22 @@ impl<B: Backend> Gpt2Model<B> {
     }
 
     /// Forward pass with optional padding mask for variable-length sequences
-    /// 
+    ///
     /// ## Benefits of Using Padding Masks
-    /// 
+    ///
     /// When processing batches of variable-length sentences, padding masks ensure:
     /// 1. **Attention Focus**: Model only attends to real content, not padding
     /// 2. **Better Representations**: No contamination from padding tokens
     /// 3. **Accurate Pooling**: Mean pooling only averages over real tokens
-    /// 
+    ///
     /// Example impact on "The cat" vs "The cat sleeps peacefully":
     /// - Without masking: Both get diluted by different amounts of padding
     /// - With masking: Both get clean representations of their actual content
-    pub fn forward_with_mask(&self, input_ids: Tensor<B, 2, Int>, padding_mask: Option<Tensor<B, 2, Bool>>) -> Tensor<B, 3> {
+    pub fn forward_with_mask(
+        &self,
+        input_ids: Tensor<B, 2, Int>,
+        padding_mask: Option<Tensor<B, 2, Bool>>,
+    ) -> Tensor<B, 3> {
         let [batch_size, seq_len] = input_ids.dims();
         let device = input_ids.device();
 
@@ -431,7 +443,7 @@ impl<B: Backend> Gpt2Model<B> {
 
         // Pass through ALL 12 transformer blocks sequentially with masking
         // Each block adds progressively more sophisticated understanding:
-        // - Early blocks: syntax, basic word relationships  
+        // - Early blocks: syntax, basic word relationships
         // - Middle blocks: complex grammar, entity recognition
         // - Final blocks: semantic meaning, contextual understanding
         for block in &self.transformer_blocks {
@@ -539,33 +551,37 @@ impl<B: Backend> Gpt2Model<B> {
     }
 
     /// Get sentence embeddings with masked mean pooling for variable-length sequences
-    /// 
+    ///
     /// ## Masked Mean Pooling
-    /// 
+    ///
     /// This is the proper way to handle variable-length sequences. Instead of averaging
     /// over ALL tokens (including padding), we only average over the actual content tokens.
-    /// 
+    ///
     /// **Without masking**: "hello" becomes diluted by many padding zeros
     /// **With masking**: "hello" maintains its full semantic representation
-    /// 
+    ///
     /// ### Mathematics:
     /// Standard mean pooling: `mean = sum(embeddings) / seq_len`
     /// Masked mean pooling: `mean = sum(embeddings * mask) / sum(mask)`
-    pub fn get_sentence_embedding_masked(&self, input_ids: Tensor<B, 2, Int>, lengths: &[usize]) -> Tensor<B, 2> {
+    pub fn get_sentence_embedding_masked(
+        &self,
+        input_ids: Tensor<B, 2, Int>,
+        lengths: &[usize],
+    ) -> Tensor<B, 2> {
         let [_batch_size, seq_len] = input_ids.dims();
         let device = input_ids.device();
-        
+
         // Create padding mask from sequence lengths
         let padding_mask = Self::create_padding_mask(lengths, seq_len, &device);
-        
+
         // Get embeddings with attention masking
-        let embeddings = self.forward_with_mask(input_ids, Some(padding_mask.clone())); 
+        let embeddings = self.forward_with_mask(input_ids, Some(padding_mask.clone()));
         // [batch_size, seq_len, d_model]
-        
+
         // For now, temporarily fall back to regular mean pooling to get training working
         // The attention masking is still happening in the transformer blocks, which is the most important part
         // TODO: Implement proper masked mean pooling once we understand Burn's tensor dimensions better
-        let pooled = embeddings.mean_dim(1); // [batch_size, 1, d_model] 
+        let pooled = embeddings.mean_dim(1); // [batch_size, 1, d_model]
         let sentence_emb = pooled.squeeze_dims(&[1]); // [batch_size, d_model]
 
         // L2-normalize (following training.rs pattern exactly)
@@ -656,18 +672,22 @@ mod tests {
 
         assert_eq!(batch_size, 2);
         assert_eq!(d_model, 768);
-        
+
         // Check that embeddings are properly normalized (L2 norm should be ~1.0)
         let embedding_data = embeddings.to_data().to_vec::<f32>().unwrap();
         let first_embedding = &embedding_data[0..768];
         let second_embedding = &embedding_data[768..1536];
-        
+
         let norm1: f32 = first_embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
         let norm2: f32 = second_embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
-        
+
         // L2 norms should be close to 1.0 (within small epsilon)
         assert!((norm1 - 1.0).abs() < 0.1, "First embedding norm: {}", norm1);
-        assert!((norm2 - 1.0).abs() < 0.1, "Second embedding norm: {}", norm2);
+        assert!(
+            (norm2 - 1.0).abs() < 0.1,
+            "Second embedding norm: {}",
+            norm2
+        );
     }
 }
 

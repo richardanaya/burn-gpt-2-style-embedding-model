@@ -35,12 +35,14 @@ pub struct TrainingConfig {
 impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<B> {
     fn step(&self, batch: TrainingBatch<B>) -> TrainOutput<RegressionOutput<B>> {
         // Use masked mean-pooled, L2-normalized embeddings
-        let emb1 = self.get_sentence_embedding_masked(batch.sentence1.clone(), &batch.sentence1_lengths);
-        let emb2 = self.get_sentence_embedding_masked(batch.sentence2.clone(), &batch.sentence2_lengths);
+        let emb1 =
+            self.get_sentence_embedding_masked(batch.sentence1.clone(), &batch.sentence1_lengths);
+        let emb2 =
+            self.get_sentence_embedding_masked(batch.sentence2.clone(), &batch.sentence2_lengths);
 
-// L2 distance components (use true squared L2, no per-dim mean)
+        // L2 distance components (use true squared L2, no per-dim mean)
         let diff = emb1.clone() - emb2.clone();
-let sq_dist = diff.powf_scalar(2.0).sum_dim(1).squeeze_dims(&[1]);
+        let sq_dist = diff.powf_scalar(2.0).sum_dim(1).squeeze_dims(&[1]);
         let dist = sq_dist.clone().sqrt();
 
         // Labels (owned)
@@ -60,8 +62,8 @@ let sq_dist = diff.powf_scalar(2.0).sum_dim(1).squeeze_dims(&[1]);
 
         let output = RegressionOutput::new(
             loss_tensor.clone(),
-predictions.detach().unsqueeze(),  // Make it 2D [batch_size, 1] 
-            y.unsqueeze(),          // Make it 2D [batch_size, 1]
+            predictions.detach().unsqueeze(), // Make it 2D [batch_size, 1]
+            y.unsqueeze(),                    // Make it 2D [batch_size, 1]
         );
         let grads = loss_tensor.backward();
         TrainOutput::new(self, grads, output)
@@ -71,14 +73,18 @@ predictions.detach().unsqueeze(),  // Make it 2D [batch_size, 1]
 impl<B: Backend> ValidStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<B> {
     fn step(&self, batch: TrainingBatch<B>) -> RegressionOutput<B> {
         // Use masked embeddings for validation as well
-        let embeddings1 = self.get_sentence_embedding_masked(batch.sentence1, &batch.sentence1_lengths).detach();
-        let embeddings2 = self.get_sentence_embedding_masked(batch.sentence2, &batch.sentence2_lengths).detach();
+        let embeddings1 = self
+            .get_sentence_embedding_masked(batch.sentence1, &batch.sentence1_lengths)
+            .detach();
+        let embeddings2 = self
+            .get_sentence_embedding_masked(batch.sentence2, &batch.sentence2_lengths)
+            .detach();
 
         let _labels = &batch.labels;
 
-// Contrastive loss
+        // Contrastive loss
         let diff = embeddings1.clone() - embeddings2.clone();
-let sq_dist = diff.powf_scalar(2.0).sum_dim(1).squeeze_dims(&[1]);
+        let sq_dist = diff.powf_scalar(2.0).sum_dim(1).squeeze_dims(&[1]);
         let dist = sq_dist.clone().sqrt();
 
         let y = batch.labels.clone();
@@ -105,8 +111,8 @@ mod tests {
     use crate::Gpt2Tokenizer;
     use burn::backend::wgpu::Wgpu;
     use burn::data::dataloader::batcher::Batcher;
-use burn::optim::Optimizer;
-use burn::data::dataloader::DataLoaderBuilder;
+    use burn::data::dataloader::DataLoaderBuilder;
+    use burn::optim::Optimizer;
     use burn::train::TrainStep;
 
     type TestBackend = burn::backend::Autodiff<Wgpu>;
@@ -209,8 +215,12 @@ use burn::data::dataloader::DataLoaderBuilder;
 
             if epoch % 10 == 0 {
                 let loss_tensor = calculate_contrastive_loss(
-                    &model.get_sentence_embedding(batch.sentence1.clone()).detach(),
-                    &model.get_sentence_embedding(batch.sentence2.clone()).detach(),
+                    &model
+                        .get_sentence_embedding(batch.sentence1.clone())
+                        .detach(),
+                    &model
+                        .get_sentence_embedding(batch.sentence2.clone())
+                        .detach(),
                     &batch.labels,
                     model.margin,
                 );
@@ -292,49 +302,56 @@ use burn::data::dataloader::DataLoaderBuilder;
 
     /// Comprehensive test with larger dataset and longer training
     /// This test verifies robust learning across diverse semantic categories
-    #[test] 
+    #[test]
     fn test_comprehensive_learning() {
         let device = Default::default();
-        
+
         // Use smaller model for test efficiency but still substantial
         let config = Gpt2Config {
             vocab_size: 50257,
-            max_seq_len: 64,    // Longer sequences
-            d_model: 128,       // Larger embedding dimension  
-            n_heads: 8,         // More attention heads
-            n_layers: 4,        // More layers
-            dropout: 0.1,       // Some dropout for regularization
+            max_seq_len: 64, // Longer sequences
+            d_model: 128,    // Larger embedding dimension
+            n_heads: 8,      // More attention heads
+            n_layers: 4,     // More layers
+            dropout: 0.1,    // Some dropout for regularization
             margin: 1.0,
         };
-        
+
         let mut model = config.init::<TestBackend>(&device);
         let tokenizer = Gpt2Tokenizer::new_simple(64).expect("Tokenizer creation failed");
         let batcher = TrainingBatcher::new(tokenizer);
-        
+
         // Create a comprehensive dataset with multiple semantic categories
         let training_items = create_comprehensive_dataset();
-        
-        println!("Training on {} sentence pairs across diverse categories", training_items.len());
-        
+
+        println!(
+            "Training on {} sentence pairs across diverse categories",
+            training_items.len()
+        );
+
         // Get initial state
         let batch = batcher.batch(training_items.clone(), &device);
         let initial_loss = calculate_contrastive_loss(
-            &model.get_sentence_embedding(batch.sentence1.clone()).detach(),
-            &model.get_sentence_embedding(batch.sentence2.clone()).detach(), 
-            &batch.labels, 
-            model.margin
+            &model
+                .get_sentence_embedding(batch.sentence1.clone())
+                .detach(),
+            &model
+                .get_sentence_embedding(batch.sentence2.clone())
+                .detach(),
+            &batch.labels,
+            model.margin,
         );
         let initial_loss_val: f32 = initial_loss.to_data().to_vec().unwrap()[0];
         println!("Initial loss: {:.4}", initial_loss_val);
-        
+
         // Train with simple approach
-        let optimizer_config = AdamConfig::new()
-            .with_weight_decay(Some(WeightDecayConfig { penalty: 0.001 }));
+        let optimizer_config =
+            AdamConfig::new().with_weight_decay(Some(WeightDecayConfig { penalty: 0.001 }));
         let mut optimizer = optimizer_config.init();
         let learning_rate = 0.005; // Higher learning rate
-        
+
         let mut loss_history = Vec::new();
-        
+
         // Create DataLoader for mini-batch training
         let burn_dataset = BurnTrainingDataset::from_dataset(&Dataset::from_pairs(
             training_items
@@ -371,154 +388,299 @@ use burn::data::dataloader::DataLoaderBuilder;
                 println!("Epoch {}: Latest Loss = {:.4}", epoch, recent_loss);
             }
         }
-        
+
         let final_loss_val = loss_history.last().unwrap();
-        
+
         // Verify strong learning occurred
         let improvement = (initial_loss_val - final_loss_val) / initial_loss_val * 100.0;
-        println!("Loss improvement: {:.4} -> {:.4} (reduction: {:.2}%)", 
-                initial_loss_val, final_loss_val, improvement);
-        
-        assert!(improvement > 80.0, 
-               "Model should show strong learning: got {:.2}% improvement, expected >80%", 
-               improvement);
-        
+        println!(
+            "Loss improvement: {:.4} -> {:.4} (reduction: {:.2}%)",
+            initial_loss_val, final_loss_val, improvement
+        );
+
+        assert!(
+            improvement > 80.0,
+            "Model should show strong learning: got {:.2}% improvement, expected >80%",
+            improvement
+        );
+
         // Test semantic understanding across categories
         test_semantic_categories(&model, &batcher, &device);
-        
+
         // Test learning convergence (loss should be decreasing trend)
         let recent_avg = loss_history[80..].iter().sum::<f32>() / 20.0;
         let early_avg = loss_history[10..30].iter().sum::<f32>() / 20.0;
-        assert!(recent_avg < early_avg, "Loss should show convergence over time");
-        
-        println!("✅ Comprehensive learning test passed! Model shows robust semantic understanding.");
+        assert!(
+            recent_avg < early_avg,
+            "Loss should show convergence over time"
+        );
+
+        println!(
+            "✅ Comprehensive learning test passed! Model shows robust semantic understanding."
+        );
     }
-    
+
     /// Create a comprehensive dataset spanning multiple semantic categories
     fn create_comprehensive_dataset() -> Vec<TrainingItem> {
         let mut items = Vec::new();
-        
+
         // 1. Animals category - similar pairs
         items.extend(vec![
-            TrainingItem::new("The cat is sleeping peacefully".to_string(), "A feline rests quietly".to_string(), 1.0),
-            TrainingItem::new("Dogs love to play fetch".to_string(), "Canines enjoy retrieving games".to_string(), 1.0),
-            TrainingItem::new("The bird flies high in the sky".to_string(), "An eagle soars through the air".to_string(), 1.0),
-            TrainingItem::new("Fish swim in the ocean".to_string(), "Marine creatures move through water".to_string(), 1.0),
+            TrainingItem::new(
+                "The cat is sleeping peacefully".to_string(),
+                "A feline rests quietly".to_string(),
+                1.0,
+            ),
+            TrainingItem::new(
+                "Dogs love to play fetch".to_string(),
+                "Canines enjoy retrieving games".to_string(),
+                1.0,
+            ),
+            TrainingItem::new(
+                "The bird flies high in the sky".to_string(),
+                "An eagle soars through the air".to_string(),
+                1.0,
+            ),
+            TrainingItem::new(
+                "Fish swim in the ocean".to_string(),
+                "Marine creatures move through water".to_string(),
+                1.0,
+            ),
         ]);
-        
-        // 2. Emotions category - similar pairs  
+
+        // 2. Emotions category - similar pairs
         items.extend(vec![
-            TrainingItem::new("I am very happy today".to_string(), "I feel joyful and excited".to_string(), 1.0),
-            TrainingItem::new("She feels sad and lonely".to_string(), "She is experiencing sorrow".to_string(), 1.0),
-            TrainingItem::new("He was angry about the situation".to_string(), "He felt furious and upset".to_string(), 1.0),
-            TrainingItem::new("The children are laughing".to_string(), "The kids are giggling with joy".to_string(), 1.0),
+            TrainingItem::new(
+                "I am very happy today".to_string(),
+                "I feel joyful and excited".to_string(),
+                1.0,
+            ),
+            TrainingItem::new(
+                "She feels sad and lonely".to_string(),
+                "She is experiencing sorrow".to_string(),
+                1.0,
+            ),
+            TrainingItem::new(
+                "He was angry about the situation".to_string(),
+                "He felt furious and upset".to_string(),
+                1.0,
+            ),
+            TrainingItem::new(
+                "The children are laughing".to_string(),
+                "The kids are giggling with joy".to_string(),
+                1.0,
+            ),
         ]);
-        
+
         // 3. Weather category - similar pairs
         items.extend(vec![
-            TrainingItem::new("It's a beautiful sunny day".to_string(), "The weather is bright and clear".to_string(), 1.0),
-            TrainingItem::new("Heavy rain is falling".to_string(), "It's pouring outside".to_string(), 1.0),
-            TrainingItem::new("Snow covers the ground".to_string(), "The landscape is white with snow".to_string(), 1.0),
-            TrainingItem::new("Strong winds are blowing".to_string(), "It's very windy today".to_string(), 1.0),
+            TrainingItem::new(
+                "It's a beautiful sunny day".to_string(),
+                "The weather is bright and clear".to_string(),
+                1.0,
+            ),
+            TrainingItem::new(
+                "Heavy rain is falling".to_string(),
+                "It's pouring outside".to_string(),
+                1.0,
+            ),
+            TrainingItem::new(
+                "Snow covers the ground".to_string(),
+                "The landscape is white with snow".to_string(),
+                1.0,
+            ),
+            TrainingItem::new(
+                "Strong winds are blowing".to_string(),
+                "It's very windy today".to_string(),
+                1.0,
+            ),
         ]);
-        
+
         // 4. Technology category - similar pairs
         items.extend(vec![
-            TrainingItem::new("The computer is processing data".to_string(), "The machine is computing information".to_string(), 1.0),
-            TrainingItem::new("Smartphones are very useful".to_string(), "Mobile phones are quite helpful".to_string(), 1.0),
-            TrainingItem::new("Artificial intelligence is advancing".to_string(), "AI technology is progressing".to_string(), 1.0),
-            TrainingItem::new("The internet connects people globally".to_string(), "The web links humans worldwide".to_string(), 1.0),
+            TrainingItem::new(
+                "The computer is processing data".to_string(),
+                "The machine is computing information".to_string(),
+                1.0,
+            ),
+            TrainingItem::new(
+                "Smartphones are very useful".to_string(),
+                "Mobile phones are quite helpful".to_string(),
+                1.0,
+            ),
+            TrainingItem::new(
+                "Artificial intelligence is advancing".to_string(),
+                "AI technology is progressing".to_string(),
+                1.0,
+            ),
+            TrainingItem::new(
+                "The internet connects people globally".to_string(),
+                "The web links humans worldwide".to_string(),
+                1.0,
+            ),
         ]);
-        
+
         // 5. Cross-category dissimilar pairs
         items.extend(vec![
             // Animal vs Technology
-            TrainingItem::new("The cat is sleeping peacefully".to_string(), "The computer is processing data".to_string(), 0.0),
-            TrainingItem::new("Dogs love to play fetch".to_string(), "Smartphones are very useful".to_string(), 0.0),
-            
-            // Emotion vs Weather  
-            TrainingItem::new("I am very happy today".to_string(), "Heavy rain is falling".to_string(), 0.0),
-            TrainingItem::new("She feels sad and lonely".to_string(), "It's a beautiful sunny day".to_string(), 0.0),
-            
+            TrainingItem::new(
+                "The cat is sleeping peacefully".to_string(),
+                "The computer is processing data".to_string(),
+                0.0,
+            ),
+            TrainingItem::new(
+                "Dogs love to play fetch".to_string(),
+                "Smartphones are very useful".to_string(),
+                0.0,
+            ),
+            // Emotion vs Weather
+            TrainingItem::new(
+                "I am very happy today".to_string(),
+                "Heavy rain is falling".to_string(),
+                0.0,
+            ),
+            TrainingItem::new(
+                "She feels sad and lonely".to_string(),
+                "It's a beautiful sunny day".to_string(),
+                0.0,
+            ),
             // Weather vs Technology
-            TrainingItem::new("Snow covers the ground".to_string(), "Artificial intelligence is advancing".to_string(), 0.0),
-            TrainingItem::new("Strong winds are blowing".to_string(), "The internet connects people globally".to_string(), 0.0),
-            
+            TrainingItem::new(
+                "Snow covers the ground".to_string(),
+                "Artificial intelligence is advancing".to_string(),
+                0.0,
+            ),
+            TrainingItem::new(
+                "Strong winds are blowing".to_string(),
+                "The internet connects people globally".to_string(),
+                0.0,
+            ),
             // Animals vs Emotions
-            TrainingItem::new("Fish swim in the ocean".to_string(), "He was angry about the situation".to_string(), 0.0),
-            TrainingItem::new("The bird flies high in the sky".to_string(), "The children are laughing".to_string(), 0.0),
-            
+            TrainingItem::new(
+                "Fish swim in the ocean".to_string(),
+                "He was angry about the situation".to_string(),
+                0.0,
+            ),
+            TrainingItem::new(
+                "The bird flies high in the sky".to_string(),
+                "The children are laughing".to_string(),
+                0.0,
+            ),
             // Additional cross-category pairs
-            TrainingItem::new("The computer crashed unexpectedly".to_string(), "The flowers bloom in spring".to_string(), 0.0),
-            TrainingItem::new("Mathematics is quite challenging".to_string(), "The pizza tastes delicious".to_string(), 0.0),
+            TrainingItem::new(
+                "The computer crashed unexpectedly".to_string(),
+                "The flowers bloom in spring".to_string(),
+                0.0,
+            ),
+            TrainingItem::new(
+                "Mathematics is quite challenging".to_string(),
+                "The pizza tastes delicious".to_string(),
+                0.0,
+            ),
         ]);
-        
+
         items
     }
-    
+
     /// Test semantic understanding across different categories
     fn test_semantic_categories<B: Backend>(
-        model: &Gpt2Model<B>, 
-        batcher: &TrainingBatcher, 
-        device: &B::Device
+        model: &Gpt2Model<B>,
+        batcher: &TrainingBatcher,
+        device: &B::Device,
     ) {
         // Test within-category similarity vs cross-category similarity
         let test_pairs = vec![
             // Within animal category (should be more similar than cross-category)
-            ("Dogs are loyal pets", "Cats are friendly animals", "within_animal"),
-            ("The elephant is large", "The mouse is small", "within_animal"),
-            
-            // Within emotion category (should be similar) 
-            ("Happiness brings joy", "Excitement creates energy", "within_emotion"),
-            
+            (
+                "Dogs are loyal pets",
+                "Cats are friendly animals",
+                "within_animal",
+            ),
+            (
+                "The elephant is large",
+                "The mouse is small",
+                "within_animal",
+            ),
+            // Within emotion category (should be similar)
+            (
+                "Happiness brings joy",
+                "Excitement creates energy",
+                "within_emotion",
+            ),
             // Cross category (should be dissimilar)
-            ("Dogs are loyal pets", "Computers process data", "cross_category"),
-            ("Beautiful sunny weather", "Advanced AI technology", "cross_category"),
-            ("Happy emotions today", "Mathematical equations", "cross_category"),
+            (
+                "Dogs are loyal pets",
+                "Computers process data",
+                "cross_category",
+            ),
+            (
+                "Beautiful sunny weather",
+                "Advanced AI technology",
+                "cross_category",
+            ),
+            (
+                "Happy emotions today",
+                "Mathematical equations",
+                "cross_category",
+            ),
         ];
-        
+
         for (sent1, sent2, category) in test_pairs {
             let items = vec![TrainingItem::new(sent1.to_string(), sent2.to_string(), 0.0)];
             let batch = batcher.batch(items, device);
-            
+
             let emb1 = model.get_sentence_embedding(batch.sentence1).detach();
             let emb2 = model.get_sentence_embedding(batch.sentence2).detach();
             let similarity = calculate_cosine_similarities(&emb1, &emb2);
             let sim_val: f32 = similarity.to_data().to_vec().unwrap()[0];
-            
+
             println!("{}: '{}' vs '{}' = {:.3}", category, sent1, sent2, sim_val);
-            
+
             // Collect similarities for statistical analysis rather than hard thresholds
             // The model has learned semantic distinctions, which is the key point
         }
-        
+
         // Verify that the model learned to make semantic distinctions
         // Test a few specific pairs to ensure reasonable behavior
-        let animal_pair = vec![TrainingItem::new("Dogs are pets".to_string(), "Cats are animals".to_string(), 0.0)];
-        let tech_pair = vec![TrainingItem::new("Computers calculate".to_string(), "Mathematics is hard".to_string(), 0.0)];
-        
+        let animal_pair = vec![TrainingItem::new(
+            "Dogs are pets".to_string(),
+            "Cats are animals".to_string(),
+            0.0,
+        )];
+        let tech_pair = vec![TrainingItem::new(
+            "Computers calculate".to_string(),
+            "Mathematics is hard".to_string(),
+            0.0,
+        )];
+
         let animal_batch = batcher.batch(animal_pair, device);
         let tech_batch = batcher.batch(tech_pair, device);
-        
+
         let animal_sim = calculate_cosine_similarities(
-            &model.get_sentence_embedding(animal_batch.sentence1).detach(),
-            &model.get_sentence_embedding(animal_batch.sentence2).detach()
+            &model
+                .get_sentence_embedding(animal_batch.sentence1)
+                .detach(),
+            &model
+                .get_sentence_embedding(animal_batch.sentence2)
+                .detach(),
         );
         let tech_sim = calculate_cosine_similarities(
             &model.get_sentence_embedding(tech_batch.sentence1).detach(),
-            &model.get_sentence_embedding(tech_batch.sentence2).detach()
+            &model.get_sentence_embedding(tech_batch.sentence2).detach(),
         );
-        
+
         let animal_sim_val: f32 = animal_sim.to_data().to_vec().unwrap()[0];
         let tech_sim_val: f32 = tech_sim.to_data().to_vec().unwrap()[0];
-        
+
         println!("Animal-animal similarity: {:.3}", animal_sim_val);
         println!("Tech-tech similarity: {:.3}", tech_sim_val);
-        
+
         // The main test is that the model learned (loss decreased significantly)
         // Secondary test is that embeddings show some semantic structure
-        assert!(animal_sim_val.abs() > 0.1 || tech_sim_val.abs() > 0.1, 
-               "Model should produce meaningful embeddings with some semantic structure");
+        assert!(
+            animal_sim_val.abs() > 0.1 || tech_sim_val.abs() > 0.1,
+            "Model should produce meaningful embeddings with some semantic structure"
+        );
     }
 
     /// Helper function to calculate cosine similarities between embeddings

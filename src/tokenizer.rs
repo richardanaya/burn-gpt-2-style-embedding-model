@@ -56,7 +56,11 @@ impl Gpt2Tokenizer {
     }
 
     /// Tokenize a single text string into token IDs with length information for masking
-    pub fn encode_with_length(&self, text: &str, add_special_tokens: bool) -> Result<(Vec<u32>, usize)> {
+    pub fn encode_with_length(
+        &self,
+        text: &str,
+        add_special_tokens: bool,
+    ) -> Result<(Vec<u32>, usize)> {
         let encoding = self
             .tokenizer
             .encode(text, add_special_tokens)
@@ -127,7 +131,11 @@ impl Gpt2Tokenizer {
     }
 
     /// Tokenize multiple texts with length information for masking
-    pub fn encode_batch_with_lengths(&self, texts: &[&str], add_special_tokens: bool) -> Result<(Vec<Vec<u32>>, Vec<usize>)> {
+    pub fn encode_batch_with_lengths(
+        &self,
+        texts: &[&str],
+        add_special_tokens: bool,
+    ) -> Result<(Vec<Vec<u32>>, Vec<usize>)> {
         let encodings = self
             .tokenizer
             .encode_batch(texts.to_vec(), add_special_tokens)
@@ -137,7 +145,7 @@ impl Gpt2Tokenizer {
 
         for encoding in encodings {
             let mut ids = encoding.get_ids().to_vec();
-            
+
             // Store original length before padding/truncation
             let original_length = ids.len().min(self.max_length);
 

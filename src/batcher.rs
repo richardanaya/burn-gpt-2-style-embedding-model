@@ -117,8 +117,8 @@ impl<B: Backend> Batcher<B, TrainingItem, TrainingBatch<B>> for TrainingBatcher 
         let labels_tensor = Tensor::<B, 1>::from_data(TensorData::from(&labels[..]), device);
 
         TrainingBatch::new(
-            sentence1_tensor, 
-            sentence2_tensor, 
+            sentence1_tensor,
+            sentence2_tensor,
             labels_tensor,
             sentence1_lengths,
             sentence2_lengths,
