@@ -70,13 +70,26 @@ impl<B: Backend> ValidStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<
         let embeddings1 = self.get_sentence_embedding(batch.sentence1).detach();
         let embeddings2 = self.get_sentence_embedding(batch.sentence2).detach();
 
+        let y = batch.labels.clone();
+
+        // Calculate contrastive loss (same formula as training, but without backprop)
+        let diff = embeddings1.clone() - embeddings2.clone();
+        let sq_dist = diff.powf_scalar(2.0).mean_dim(1).squeeze_dims(&[1]);
+        let dist = sq_dist.clone().sqrt();
+
+        let pos_loss = y.clone() * sq_dist.clone();
+        let neg_loss = (Tensor::<B, 1>::ones_like(&y) - y.clone())
+            * (self.margin - dist).clamp_min(0.0).powf_scalar(2.0);
+        let valid_loss = 0.5 * (pos_loss + neg_loss).mean().unsqueeze();
+
+        // Calculate predictions using cosine similarity for metrics
         let dot_product = (embeddings1.clone() * embeddings2.clone()).sum_dim(1);
         let norm1 = embeddings1.clone().powf_scalar(2.0).sum_dim(1).sqrt();
         let norm2 = embeddings2.powf_scalar(2.0).sum_dim(1).sqrt();
         let cosine_sim = dot_product / (norm1 * norm2 + 1e-8);
-        let predictions = (cosine_sim.clone() + 1.0) * 0.5;
+        let predictions = (cosine_sim + 1.0) * 0.5;
 
-        RegressionOutput::new(batch.labels, predictions.clone(), cosine_sim.unsqueeze())
+        RegressionOutput::new(y, predictions, valid_loss)
     }
 }
 
