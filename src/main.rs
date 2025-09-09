@@ -24,9 +24,9 @@ enum Commands {
         #[arg(short, long)]
         train_data: PathBuf,
 
-        /// Path to validation TSV file (optional)
+        /// Path to validation TSV file
         #[arg(short, long)]
-        validation_data: Option<PathBuf>,
+        validation_data: PathBuf,
 
         /// Path to save model checkpoints (default: training_output/)
         #[arg(short, long, default_value = "training_output")]
@@ -76,10 +76,10 @@ enum Commands {
 
 fn load_datasets(
     train_data_path: &PathBuf,
-    validation_data_path: Option<&PathBuf>,
+    validation_data_path: &PathBuf,
     limit_train: usize,
     limit_validation: usize,
-) -> Result<(Dataset, Option<Dataset>)> {
+) -> Result<(Dataset, Dataset)> {
     println!("Loading training data from: {}", train_data_path.display());
     let mut train_dataset = Dataset::from_tsv(train_data_path)?;
 
@@ -94,32 +94,26 @@ fn load_datasets(
     train_dataset.statistics().print();
     println!();
 
-    let validation_dataset = if let Some(val_path) = validation_data_path {
-        println!("Loading validation data from: {}", val_path.display());
-        let mut val_dataset = Dataset::from_tsv(val_path)?;
+    println!("Loading validation data from: {}", validation_data_path.display());
+    let mut validation_dataset = Dataset::from_tsv(validation_data_path)?;
 
-        if limit_validation > 0 {
-            println!(
-                "🔬 Limiting validation data to {} examples for testing (before: {})",
-                limit_validation,
-                val_dataset.examples.len()
-            );
-            val_dataset.limit(limit_validation);
-            println!("🔬 After limiting: {} examples", val_dataset.examples.len());
-        } else {
-            println!(
-                "🔬 No validation limit specified (limit_validation = {})",
-                limit_validation
-            );
-        }
-
-        val_dataset.statistics().print();
-        println!();
-        Some(val_dataset)
+    if limit_validation > 0 {
+        println!(
+            "🔬 Limiting validation data to {} examples for testing (before: {})",
+            limit_validation,
+            validation_dataset.examples.len()
+        );
+        validation_dataset.limit(limit_validation);
+        println!("🔬 After limiting: {} examples", validation_dataset.examples.len());
     } else {
-        println!("No validation data provided");
-        None
-    };
+        println!(
+            "🔬 No validation limit specified (limit_validation = {})",
+            limit_validation
+        );
+    }
+
+    validation_dataset.statistics().print();
+    println!();
 
     Ok((train_dataset, validation_dataset))
 }
@@ -150,7 +144,7 @@ async fn main() -> Result<()> {
             // Load datasets
             let (train_dataset, validation_dataset) = load_datasets(
                 train_data,
-                validation_data.as_ref(),
+                validation_data,
                 *limit_train,
                 *limit_validation,
             )?;
@@ -159,9 +153,7 @@ async fn main() -> Result<()> {
             println!("\n🔥 Starting Training with Burn Framework");
             println!("==========================================");
             println!("📊 Training Examples: {}", train_dataset.len());
-            if let Some(ref val_dataset) = validation_dataset {
-                println!("📊 Validation Examples: {}", val_dataset.len());
-            }
+            println!("📊 Validation Examples: {}", validation_dataset.len());
             println!("🔄 Epochs: {}", epochs);
             println!("📦 Batch Size: {}", batch_size);
             println!("🎯 Learning Rate: {:.2e}", initial_lr);
@@ -170,7 +162,7 @@ async fn main() -> Result<()> {
 
             train_model(
                 train_dataset,
-                validation_dataset,
+                Some(validation_dataset),
                 output_dir,
                 *epochs,
                 *batch_size,
