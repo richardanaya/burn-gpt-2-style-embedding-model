@@ -145,14 +145,14 @@ pub async fn train_model(
         d_model,
         n_heads,
         n_layers,
-        dropout: 0.1,
+        dropout: 0.3, // Increased from 0.1 for better regularization
         margin: 1.0, // default for contrastive loss
     };
 
     let config = TrainingConfig {
         model: model_config,
         optimizer: AdamConfig::new()
-            .with_weight_decay(Some(WeightDecayConfig { penalty: 0.01 }))
+            .with_weight_decay(Some(WeightDecayConfig { penalty: 0.05 })) // Increased from 0.01
             .with_grad_clipping(Some(GradientClippingConfig::Norm(1.0))),
         num_epochs: epochs,
         batch_size,
