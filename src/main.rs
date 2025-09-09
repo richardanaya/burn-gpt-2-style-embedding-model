@@ -45,7 +45,7 @@ enum Commands {
         batch_size: usize,
 
         /// Initial learning rate
-        #[arg(long, default_value = "1e-5")]
+        #[arg(long, default_value = "1e-3")]
         initial_lr: f64,
 
         /// Number of attention heads (default: 12)
