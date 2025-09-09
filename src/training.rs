@@ -100,7 +100,8 @@ mod tests {
     use crate::Gpt2Tokenizer;
     use burn::backend::wgpu::Wgpu;
     use burn::data::dataloader::batcher::Batcher;
-    use burn::optim::Optimizer;
+use burn::optim::Optimizer;
+use burn::data::dataloader::DataLoaderBuilder;
     use burn::train::TrainStep;
 
     type TestBackend = burn::backend::Autodiff<Wgpu>;
@@ -182,14 +183,34 @@ mod tests {
         let optimizer_config = AdamConfig::new().with_weight_decay(None);
         let mut optimizer = optimizer_config.init();
 
+        // Build a mini-batch DataLoader instead of feeding the whole dataset each step
+        let burn_dataset = BurnTrainingDataset::from_dataset(&Dataset::from_pairs(
+            training_items
+                .iter()
+                .map(|it| (it.sentence1.as_str(), it.sentence2.as_str(), it.label))
+                .collect(),
+        ));
+        let dataloader = DataLoaderBuilder::new(batcher.clone())
+            .batch_size(3)
+            .shuffle(42)
+            .num_workers(1)
+            .build(burn_dataset);
+
         for epoch in 0..50 {
-            let batch = batcher.batch(training_items.clone(), &device);
-            let train_output = TrainStep::step(&model, batch);
-            model = optimizer.step(0.01, model, train_output.grads);
+            for batch in dataloader.iter() {
+                let train_output = TrainStep::step(&model, batch);
+                model = optimizer.step(0.01, model, train_output.grads);
+            }
 
             if epoch % 10 == 0 {
-                let loss_data: Vec<f32> = train_output.item.loss.to_data().to_vec().unwrap();
-                println!("Epoch {}: Loss = {:.4}", epoch, loss_data[0]);
+                let loss_tensor = calculate_contrastive_loss(
+                    &model.get_sentence_embedding(batch.sentence1.clone()).detach(),
+                    &model.get_sentence_embedding(batch.sentence2.clone()).detach(),
+                    &batch.labels,
+                    model.margin,
+                );
+                let loss_val: f32 = loss_tensor.to_data().to_vec().unwrap()[0];
+                println!("Epoch {}: Loss = {:.4}", epoch, loss_val);
             }
         }
 
@@ -309,24 +330,40 @@ mod tests {
         
         let mut loss_history = Vec::new();
         
+        // Create DataLoader for mini-batch training
+        let burn_dataset = BurnTrainingDataset::from_dataset(&Dataset::from_pairs(
+            training_items
+                .iter()
+                .map(|it| (it.sentence1.as_str(), it.sentence2.as_str(), it.label))
+                .collect(),
+        ));
+        let dataloader = DataLoaderBuilder::new(batcher.clone())
+            .batch_size(8)
+            .shuffle(123)
+            .num_workers(1)
+            .build(burn_dataset);
+
         for epoch in 0..100 {
-            let batch = batcher.batch(training_items.clone(), &device);
-            
-            // Calculate actual contrastive loss for monitoring
-            let emb1 = model.get_sentence_embedding(batch.sentence1.clone());
-            let emb2 = model.get_sentence_embedding(batch.sentence2.clone());
-            let actual_loss = calculate_contrastive_loss(&emb1.clone().detach(), &emb2.clone().detach(), &batch.labels, model.margin);
-            let actual_loss_val: f32 = actual_loss.to_data().to_vec().unwrap()[0];
-            loss_history.push(actual_loss_val);
-            
-            // Use TrainStep for gradient computation
-            let train_output = TrainStep::step(&model, batch);
-            model = optimizer.step(learning_rate, model, train_output.grads);
-            
+            for batch in dataloader.iter() {
+                // Calculate actual contrastive loss for monitoring on current batch
+                let emb1 = model.get_sentence_embedding(batch.sentence1.clone());
+                let emb2 = model.get_sentence_embedding(batch.sentence2.clone());
+                let actual_loss = calculate_contrastive_loss(
+                    &emb1.clone().detach(),
+                    &emb2.clone().detach(),
+                    &batch.labels,
+                    model.margin,
+                );
+                let actual_loss_val: f32 = actual_loss.to_data().to_vec().unwrap()[0];
+                loss_history.push(actual_loss_val);
+
+                let train_output = TrainStep::step(&model, batch);
+                model = optimizer.step(learning_rate, model, train_output.grads);
+            }
+
             if epoch % 25 == 0 || epoch == 99 {
-                let train_loss_val: f32 = train_output.item.loss.to_data().to_vec::<f32>().unwrap()[0];
-                println!("Epoch {}: Actual Loss = {:.4}, Train Loss = {:.4}", 
-                        epoch, actual_loss_val, train_loss_val);
+                let recent_loss = *loss_history.last().unwrap();
+                println!("Epoch {}: Latest Loss = {:.4}", epoch, recent_loss);
             }
         }
         
