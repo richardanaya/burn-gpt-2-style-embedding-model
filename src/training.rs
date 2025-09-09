@@ -47,6 +47,10 @@ fn build_regression_output<B: Backend>(
     labels: Tensor<B, 1>,
     margin: f32,
 ) -> (Tensor<B, 1>, RegressionOutput<B>) {
+    let emb1_clone = emb1.clone();
+    let emb2_clone = emb2.clone();
+    let emb1 = emb1 / (emb1_clone.powf_scalar(2.0).sum_dim(1).sqrt().unsqueeze() + 1e-8);
+    let emb2 = emb2 / (emb2_clone.powf_scalar(2.0).sum_dim(1).sqrt().unsqueeze() + 1e-8);
     // -------- contrastive loss (pairwise distance) -------------------------
     let diff = emb1.clone() - emb2.clone();
     let sq_dist = diff.powf_scalar(2.0).sum_dim(1).squeeze_dims(&[1]); // [batch]
