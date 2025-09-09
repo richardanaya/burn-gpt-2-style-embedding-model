@@ -34,9 +34,9 @@ pub struct TrainingConfig {
 
 impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<B> {
     fn step(&self, batch: TrainingBatch<B>) -> TrainOutput<RegressionOutput<B>> {
-        // TODO: Switch back to masked embeddings once tensor dimension issues are resolved
-        let emb1 = self.get_sentence_embedding(batch.sentence1.clone());
-        let emb2 = self.get_sentence_embedding(batch.sentence2.clone());
+        // Use masked mean-pooled, L2-normalized embeddings
+        let emb1 = self.get_sentence_embedding_masked(batch.sentence1.clone(), &batch.sentence1_lengths);
+        let emb2 = self.get_sentence_embedding_masked(batch.sentence2.clone(), &batch.sentence2_lengths);
 
 // L2 distance components (use true squared L2, no per-dim mean)
         let diff = emb1.clone() - emb2.clone();
@@ -70,9 +70,9 @@ predictions.detach().unsqueeze(),  // Make it 2D [batch_size, 1]
 
 impl<B: Backend> ValidStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<B> {
     fn step(&self, batch: TrainingBatch<B>) -> RegressionOutput<B> {
-        // TODO: Switch back to masked embeddings once tensor dimension issues are resolved
-        let embeddings1 = self.get_sentence_embedding(batch.sentence1).detach();
-        let embeddings2 = self.get_sentence_embedding(batch.sentence2).detach();
+        // Use masked embeddings for validation as well
+        let embeddings1 = self.get_sentence_embedding_masked(batch.sentence1, &batch.sentence1_lengths).detach();
+        let embeddings2 = self.get_sentence_embedding_masked(batch.sentence2, &batch.sentence2_lengths).detach();
 
         let _labels = &batch.labels;
 

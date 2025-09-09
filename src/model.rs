@@ -531,7 +531,11 @@ impl<B: Backend> Gpt2Model<B> {
         // Apply mean pooling: average over sequence length dimension to get sentence embeddings
         // This transforms [batch_size, seq_len, d_model] -> [batch_size, d_model]
         let pooled = embeddings.mean_dim(1); // This gives [batch_size, 1, d_model]
-        pooled.squeeze_dims(&[1]) // Remove the singleton seq dimension to get [batch_size, d_model]
+        let sentence_emb = pooled.squeeze_dims(&[1]); // [batch_size, d_model]
+
+        // L2-normalize embeddings to unit length
+        let norm = sentence_emb.clone().powf_scalar(2.0).sum_dim(1).sqrt().unsqueeze_dim(1); // [batch_size,1]
+        sentence_emb / (norm + 1e-8)
     }
 
     /// Get sentence embeddings with masked mean pooling for variable-length sequences
@@ -584,7 +588,11 @@ impl<B: Backend> Gpt2Model<B> {
         let mean_pooled = sum_embeddings / token_counts_expanded;
         
         // Squeeze to get [batch_size, d_model]
-        mean_pooled.squeeze_dims(&[1])
+        let sentence_emb = mean_pooled.squeeze_dims(&[1]);
+
+        // L2-normalize
+        let norm = sentence_emb.clone().powf_scalar(2.0).sum_dim(1).sqrt().unsqueeze_dim(1);
+        sentence_emb / (norm + 1e-8)
     }
 
     /// Get embeddings for multiple sentences
