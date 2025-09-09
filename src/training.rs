@@ -74,9 +74,9 @@ impl<B: Backend> ValidStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<
         let norm1 = embeddings1.clone().powf_scalar(2.0).sum_dim(1).sqrt();
         let norm2 = embeddings2.powf_scalar(2.0).sum_dim(1).sqrt();
         let cosine_sim = dot_product / (norm1 * norm2 + 1e-8);
-        let predictions = (cosine_sim + 1.0) * 0.5;
+        let predictions = (cosine_sim.clone() + 1.0) * 0.5;
 
-        RegressionOutput::new(batch.labels, predictions.clone(), predictions.unsqueeze())
+        RegressionOutput::new(batch.labels, predictions.clone(), cosine_sim.unsqueeze())
     }
 }
 
