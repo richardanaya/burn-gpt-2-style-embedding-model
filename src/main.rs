@@ -55,16 +55,16 @@ enum Commands {
         #[arg(long, default_value = "1e-5")]
         initial_lr: f64,
 
-        /// Number of attention heads (default: 12)
-        #[arg(long, default_value = "4")]
+        /// Number of attention heads (default: 1)
+        #[arg(long, default_value = "1")]
         n_heads: usize,
 
-        /// Number of transformer layers (default: 12)
-        #[arg(long, default_value = "4")]
+        /// Number of transformer layers (default: 1)
+        #[arg(long, default_value = "1")]
         n_layers: usize,
 
         /// Embedding dimension size (default: 256)
-        #[arg(long, default_value = "256")]
+        #[arg(long, default_value = "128")]
         d_model: usize,
 
         /// Maximum sequence length / context size (default: 1024)
@@ -82,6 +82,14 @@ enum Commands {
         /// Disable TUI and use simple console output for training
         #[arg(long)]
         no_tui: bool,
+
+        /// Margin for contrastive loss (larger = more separation)
+        #[arg(long, default_value = "2.0")]
+        margin: f32,
+
+        /// Temperature for similarity scaling (lower = more separation)
+        #[arg(long, default_value = "0.05")]
+        temperature: f32,
     },
 }
 
@@ -364,6 +372,8 @@ async fn main() -> Result<()> {
             limit_train,
             limit_validation,
             no_tui,
+            margin,
+            temperature,
         } => {
             // Load datasets
             let (train_dataset, validation_dataset) = load_datasets(
@@ -397,6 +407,8 @@ async fn main() -> Result<()> {
                 *d_model,
                 *context_size,
                 *no_tui,
+                *margin,
+                *temperature,
                 device,
             )
             .await

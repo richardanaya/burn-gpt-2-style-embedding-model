@@ -47,6 +47,7 @@ fn build_regression_output<B: Backend>(
     emb2: Tensor<B, 2>,
     labels: Tensor<B, 1>,
     margin: f32,
+    temperature: f32,
 ) -> (Tensor<B, 1>, RegressionOutput<B>) {
     let emb1_clone = emb1.clone();
     let emb2_clone = emb2.clone();
@@ -69,7 +70,10 @@ fn build_regression_output<B: Backend>(
     let norm1 = emb1.powf_scalar(2.0).sum_dim(1).sqrt();
     let norm2 = emb2.powf_scalar(2.0).sum_dim(1).sqrt();
     let cosine_sim = dot_product / (norm1 * norm2 + 1e-8);
-    let predictions = (cosine_sim + 1.0) * 0.5; // range [0,1]
+    
+    // Apply temperature scaling to prevent embedding collapse
+    let cosine_sim_scaled = cosine_sim / temperature;
+    let predictions = (cosine_sim_scaled + 1.0) * 0.5; // range [0,1]
 
     // `RegressionOutput` expects 2-D tensors for predictions / targets
     let output = RegressionOutput::new(
@@ -95,8 +99,22 @@ impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, RegressionOutput<B>> for Gp
 
         let labels = batch.labels.clone();
 
+        // Monitor embedding diversity periodically to detect collapse
+        if self.temperature < 0.1 { // Only monitor when using anti-collapse settings
+            let (cos_mean, cos_std, cos_min, cos_max) = compute_similarity_stats(&emb1, &emb2);
+            // Convert to f32 for comparison
+            let cos_std_f32: f32 = cos_std.elem();
+            if cos_std_f32 < 0.1 { // Low standard deviation indicates potential collapse
+                let cos_mean_f32: f32 = cos_mean.elem();
+                let cos_min_f32: f32 = cos_min.elem(); 
+                let cos_max_f32: f32 = cos_max.elem();
+                println!("⚠️  Potential embedding collapse detected! Cos sim stats: mean={:.3}, std={:.3}, range=[{:.3}, {:.3}]", 
+                    cos_mean_f32, cos_std_f32, cos_min_f32, cos_max_f32);
+            }
+        }
+
         // Shared logic
-        let (loss_tensor, output) = build_regression_output(emb1, emb2, labels, self.margin);
+        let (loss_tensor, output) = build_regression_output(emb1, emb2, labels, self.margin, self.temperature);
 
         // Back-prop
         let gradients = loss_tensor.backward();
@@ -117,9 +135,34 @@ impl<B: Backend> ValidStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<
         let labels = batch.labels.clone();
 
         // We only need the `RegressionOutput`
-        let (_, output) = build_regression_output(emb1, emb2, labels, self.margin);
+        let (_, output) = build_regression_output(emb1, emb2, labels, self.margin, self.temperature);
         output
     }
+}
+
+/* -------------------------------------------------------------------------- */
+/*                              Embedding Monitoring                          */
+/* -------------------------------------------------------------------------- */
+
+/// Compute similarity statistics to detect embedding collapse
+fn compute_similarity_stats<B: Backend>(
+    emb1: &Tensor<B, 2>,
+    emb2: &Tensor<B, 2>,
+) -> (B::FloatElem, B::FloatElem, B::FloatElem, B::FloatElem) {
+    // Normalize embeddings
+    let emb1_norm = emb1.clone() / (emb1.clone().powf_scalar(2.0).sum_dim(1).sqrt().unsqueeze() + 1e-8);
+    let emb2_norm = emb2.clone() / (emb2.clone().powf_scalar(2.0).sum_dim(1).sqrt().unsqueeze() + 1e-8);
+    
+    // Compute cosine similarities
+    let cosine_sim = (emb1_norm * emb2_norm).sum_dim(1);
+    
+    // Compute statistics on device, then move to host
+    let cos_mean = cosine_sim.clone().mean().into_scalar();
+    let cos_std = ((cosine_sim.clone() - cos_mean).powf_scalar(2.0).mean().sqrt()).into_scalar();
+    let cos_min = cosine_sim.clone().min().into_scalar();
+    let cos_max = cosine_sim.clone().max().into_scalar();
+    
+    (cos_mean, cos_std, cos_min, cos_max)
 }
 
 /* -------------------------------------------------------------------------- */
@@ -139,6 +182,8 @@ pub async fn train_model(
     d_model: usize,
     context_size: usize,
     no_tui: bool,
+    margin: f32,
+    temperature: f32,
     device: burn::backend::wgpu::WgpuDevice,
 ) -> Result<()> {
     // Load vocab size from tokenizer
@@ -159,7 +204,8 @@ pub async fn train_model(
         n_heads,
         n_layers,
         dropout: 0.4,
-        margin: 1.0, // default for contrastive loss
+        margin, // CLI parameter for contrastive loss
+        temperature, // CLI parameter for embedding diversity
     };
 
     let config = TrainingConfig {

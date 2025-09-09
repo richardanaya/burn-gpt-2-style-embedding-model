@@ -26,6 +26,9 @@ pub struct Gpt2Config {
     /// Margin parameter for contrastive loss
     #[config(default = 1.0)]
     pub margin: f32,
+    /// Temperature parameter for similarity scaling (lower = more separation)
+    #[config(default = 0.07)]
+    pub temperature: f32,
 }
 
 impl Gpt2Config {
@@ -199,6 +202,8 @@ pub struct Gpt2Model<B: Backend> {
     dropout: Dropout,
     /// Margin parameter for contrastive loss
     pub margin: f32,
+    /// Temperature parameter for similarity scaling
+    pub temperature: f32,
 }
 
 impl<B: Backend> Gpt2Model<B> {
@@ -273,6 +278,7 @@ impl<B: Backend> Gpt2Model<B> {
             ln_f,
             dropout,
             margin: config.margin,
+            temperature: config.temperature,
         }
     }
 
