@@ -45,7 +45,6 @@ async fn main() -> Result<()> {
         2,    // n_layers (reduced for faster training)
         128,  // d_model (reduced for faster training)
         32,   // context size (reduced for faster training)
-        0.5,  // margin
         true, // no_tui - use headless mode for testing
         device,
     )

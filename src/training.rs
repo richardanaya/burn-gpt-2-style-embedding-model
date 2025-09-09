@@ -91,7 +91,6 @@ pub async fn train_model(
     n_layers: usize,
     d_model: usize,
     context_size: usize,
-    margin: f32,
     no_tui: bool,
     device: burn::backend::wgpu::WgpuDevice,
 ) -> Result<()> {
@@ -102,7 +101,7 @@ pub async fn train_model(
         n_heads,
         n_layers,
         dropout: 0.1,
-        margin,
+        margin: 1.0, // Good default for contrastive loss
     };
 
     let config = TrainingConfig {

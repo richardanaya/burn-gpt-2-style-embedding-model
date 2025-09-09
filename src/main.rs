@@ -72,9 +72,6 @@ enum Commands {
         #[arg(long, default_value = "0")]
         limit_validation: usize,
 
-        /// Margin parameter for contrastive loss (default: 1.0)
-        #[arg(long, default_value = "1.0")]
-        margin: f32,
 
         /// Disable TUI and use simple console output for training
         #[arg(long)]
@@ -254,7 +251,6 @@ async fn main() -> Result<()> {
             context_size,
             limit_train,
             limit_validation,
-            margin,
             no_tui,
         } => {
             // Load datasets
@@ -289,7 +285,6 @@ async fn main() -> Result<()> {
                 *n_layers,
                 *d_model,
                 *context_size,
-                *margin,
                 *no_tui,
                 device,
             )
