@@ -89,10 +89,8 @@ impl<B: Backend> Batcher<B, TrainingItem, TrainingBatch<B>> for TrainingBatcher 
             panic!("All items in batch failed tokenization. This indicates a problem with the input data or tokenizer configuration. Check your dataset for malformed entries.");
         }
 
-        // Note: The tokenizer's encode_with_length already handles padding to max_length,
-        // so all sequences should have the same length already
-        let max_len1 = sentence1_ids[0].len(); // All should be same length due to padding
-        let max_len2 = sentence2_ids[0].len(); // All should be same length due to padding
+        let max_len1 = sentence1_ids.iter().map(Vec::len).max().unwrap();
+        let max_len2 = sentence2_ids.iter().map(Vec::len).max().unwrap();
 
         let batch_size = sentence1_ids.len();
         let mut padded_sentence1 = Vec::with_capacity(batch_size * max_len1);

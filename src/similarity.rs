@@ -8,38 +8,11 @@ use simsimd::SpatialSimilarity;
 ///
 /// This function uses SimSIMD's optimized SIMD implementation for better performance.
 /// Note: SimSIMD returns cosine *distance* (1 - similarity), so we convert it back.
-pub fn cosine_similarity<B: Backend>(vec1: Tensor<B, 1>, vec2: Tensor<B, 1>) -> Tensor<B, 1> {
-    // Extract data as f32 slices for SimSIMD
-    let vec1_data = vec1.to_data().to_vec::<f32>().unwrap();
-    let vec2_data = vec2.to_data().to_vec::<f32>().unwrap();
-
-    // Use SimSIMD cosine similarity - note that SimSIMD returns cosine *distance*, not similarity
-    // Cosine distance = 1 - cosine similarity, so we need to convert back
-    let cosine_distance = match SpatialSimilarity::cosine(&vec1_data, &vec2_data) {
-        Some(distance) => distance as f32,
-        None => {
-            eprintln!("Warning: SimSIMD cosine calculation failed (returned None)");
-            eprintln!(
-                "Vector 1 length: {}, Vector 2 length: {}",
-                vec1_data.len(),
-                vec2_data.len()
-            );
-            eprintln!(
-                "Vector 1 sample: {:?}",
-                &vec1_data[..vec1_data.len().min(5)]
-            );
-            eprintln!(
-                "Vector 2 sample: {:?}",
-                &vec2_data[..vec2_data.len().min(5)]
-            );
-            1.0 // Fallback: maximum distance (minimum similarity)
-        }
-    };
-    let cosine_similarity = 1.0 - cosine_distance;
-
-    // Convert back to tensor
-    let device = &vec1.device();
-    Tensor::<B, 1>::from_data(TensorData::from(&[cosine_similarity][..]), device)
+pub fn cosine_similarity<B: Backend>(v1: Tensor<B, 1>, v2: Tensor<B, 1>) -> Tensor<B, 1> {
+    let dot  = (v1.clone() * v2.clone()).sum();
+    let norm = v1.clone().powf_scalar(2.0).sum().sqrt()
+             * v2.powf_scalar(2.0).sum().sqrt();
+    dot / (norm + 1e-8)
 }
 
 /// Calculate Euclidean distance between two vectors using SimSIMD

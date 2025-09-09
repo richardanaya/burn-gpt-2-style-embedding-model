@@ -578,10 +578,9 @@ impl<B: Backend> Gpt2Model<B> {
         let embeddings = self.forward_with_mask(input_ids, Some(padding_mask.clone()));
         // [batch_size, seq_len, d_model]
 
-        // For now, temporarily fall back to regular mean pooling to get training working
-        // The attention masking is still happening in the transformer blocks, which is the most important part
-        // TODO: Implement proper masked mean pooling once we understand Burn's tensor dimensions better
-        let pooled = embeddings.mean_dim(1); // [batch_size, 1, d_model]
+        let pooled = (embeddings * padding_mask.clone().float().unsqueeze_dim(2))
+                 .sum_dim(1) / padding_mask.float().sum_dim(1).clamp_min(1.).unsqueeze_dim(1);
+                
         let sentence_emb = pooled.squeeze_dims(&[1]); // [batch_size, d_model]
 
         // L2-normalize (following training.rs pattern exactly)
