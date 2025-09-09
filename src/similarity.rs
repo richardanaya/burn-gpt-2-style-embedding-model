@@ -198,21 +198,20 @@ impl<B: Backend<FloatElem = f32>> SimilarityCalculator<B> {
     /// - **Result**: Embeddings that capture sentence meaning while being robust to variation
     ///
     /// **Example of the Process:**
-    /// ```
+    ///
     /// Input: "The happy cat is sleeping peacefully"
     ///
     /// After Final Transformer Layer:
-    /// "The":        [0.12, -0.34, 0.67, ...]  ← Semantically processed
-    /// "happy":      [0.89, 0.23, -0.15, ...]  ← Understands positive emotion
-    /// "cat":        [0.45, -0.12, 0.78, ...]  ← Knows it's an animal
-    /// "is":         [0.01, 0.05, -0.02, ...]  ← Minimal semantic content
-    /// "sleeping":   [0.34, 0.56, 0.21, ...]  ← Understands action/state
-    /// "peacefully": [0.67, 0.43, -0.08, ...] ← Understands manner/emotion
+    /// - "The":        [0.12, -0.34, 0.67, ...]  (Semantically processed)
+    /// - "happy":      [0.89, 0.23, -0.15, ...]  (Understands positive emotion)
+    /// - "cat":        [0.45, -0.12, 0.78, ...]  (Knows it's an animal)
+    /// - "is":         [0.01, 0.05, -0.02, ...]  (Minimal semantic content)
+    /// - "sleeping":   [0.34, 0.56, 0.21, ...]  (Understands action/state)
+    /// - "peacefully": [0.67, 0.43, -0.08, ...] (Understands manner/emotion)
     ///
     /// Mean Pooled Result:
     /// [(0.12+0.89+0.45+0.01+0.34+0.67)/6, (-0.34+0.23-0.12+0.05+0.56+0.43)/6, ...]
-    /// = [0.41, 0.135, ...]  ← Balanced representation of entire sentence
-    /// ```
+    /// = [0.41, 0.135, ...]  (Balanced representation of entire sentence)
     ///
     /// The resulting embedding captures the overall semantic content: a peaceful,
     /// positive scene involving an animal at rest.

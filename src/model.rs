@@ -265,12 +265,10 @@ impl<B: Backend> Gpt2Model<B> {
     /// ### Why Final Layer is Best for Sentence Embeddings
     ///
     /// **1. Maximum Contextual Understanding**
-    /// ```
-    /// Input: "The bank by the river was steep"
     ///
-    /// Early layers might represent "bank" with financial concepts mixed in
-    /// Final layer understands from full context that "bank" means riverbank
-    /// ```
+    /// Example: "The bank by the river was steep"
+    /// - Early layers might represent "bank" with financial concepts mixed in
+    /// - Final layer understands from full context that "bank" means riverbank
     ///
     /// **2. Complete Information Integration**
     /// The final layer has processed information from the entire sequence
@@ -279,11 +277,10 @@ impl<B: Backend> Gpt2Model<B> {
     /// **3. Abstract Semantic Concepts**
     /// Later layers capture higher-level semantic relationships that are crucial
     /// for similarity tasks:
-    /// ```
-    /// "The cat is sleeping" vs "A feline is resting"
-    /// Final layer representations will be more similar due to semantic understanding
-    /// Early layer representations might focus more on surface-level differences
-    /// ```
+    ///
+    /// Example: "The cat is sleeping" vs "A feline is resting"
+    /// - Final layer representations will be more similar due to semantic understanding
+    /// - Early layer representations might focus more on surface-level differences
     ///
     /// **4. Research Evidence**
     /// Studies show that different layers capture different types of information:
@@ -393,7 +390,7 @@ impl<B: Backend> Gpt2Model<B> {
     /// 3. **Output**: Single sentence embedding [batch_size, d_model]
     ///
     /// ### Example:
-    /// ```
+    ///
     /// Input sentence: "The cat sleeps"
     /// Token embeddings after final transformer layer:
     /// - "The":    [0.1, -0.2, 0.3, ...]  (768 dimensions)
@@ -403,7 +400,6 @@ impl<B: Backend> Gpt2Model<B> {
     /// Mean pooled sentence embedding:
     /// Average of all three: [(0.1+0.5-0.2)/3, (-0.2+0.1+0.4)/3, (0.3-0.1+0.2)/3, ...]
     /// Result: [0.133, 0.1, 0.133, ...] (768 dimensions)
-    /// ```
     ///
     /// ## Why Mean Pooling?
     ///
@@ -580,11 +576,12 @@ pub fn save_model<B: Backend>(model: &Gpt2Model<B>, path: impl AsRef<Path>) -> R
 /// ## Example
 /// ```rust,no_run
 /// use burn_gpt_n_embedding_model::{Gpt2Config, load_model};
+/// use burn::backend::wgpu::{Wgpu, WgpuDevice};
 /// # use anyhow::Result;
 /// # fn example() -> Result<()> {
 /// let config = Gpt2Config::default();
-/// let device = Default::default();
-/// let model = load_model(config, "trained_model.mpk", &device)?;
+/// let device = WgpuDevice::default();
+/// let model = load_model::<Wgpu>(config, "trained_model.mpk", &device)?;
 /// # Ok(())
 /// # }
 /// ```

@@ -171,8 +171,7 @@ mod tests {
             .get_sentence_embedding(batch.sentence2.clone())
             .detach();
 
-        // Calculate initial similarity scores
-        let initial_cos_sim = calculate_cosine_similarities(&initial_emb1, &initial_emb2);
+        // Calculate initial loss
         let initial_loss =
             calculate_contrastive_loss(&initial_emb1, &initial_emb2, &batch.labels, model.margin);
 
