@@ -1,6 +1,6 @@
 use anyhow::Result;
 use burn_gpt_n_embedding_model::{
-    calculate_similarity, embed_sentence, train_model, validate_model, Dataset, LossFunction,
+    calculate_similarity, embed_sentence, train_model, validate_model, Dataset,
 };
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -47,10 +47,6 @@ enum Commands {
         /// Initial learning rate
         #[arg(long, default_value = "1e-5")]
         initial_lr: f64,
-
-        /// Loss function: contrastive, cosine, or mse
-        #[arg(long, default_value = "contrastive")]
-        loss: String,
 
         /// Number of attention heads (default: 12)
         #[arg(long, default_value = "12")]
@@ -183,21 +179,6 @@ enum Commands {
     },
 }
 
-fn parse_loss_function(loss_function: &str) -> LossFunction {
-    match loss_function.to_lowercase().as_str() {
-        "contrastive" => LossFunction::Contrastive,
-        "cosine" => LossFunction::CosineEmbedding,
-        "mse" => LossFunction::MseSimilarity,
-        _ => {
-            eprintln!(
-                "Unknown loss function: {}. Using contrastive loss.",
-                loss_function
-            );
-            LossFunction::Contrastive
-        }
-    }
-}
-
 fn load_datasets(
     train_data_path: &PathBuf,
     validation_data_path: Option<&PathBuf>,
@@ -263,7 +244,6 @@ async fn main() -> Result<()> {
             epochs,
             batch_size,
             initial_lr,
-            loss,
             n_heads,
             n_layers,
             d_model,
@@ -272,9 +252,6 @@ async fn main() -> Result<()> {
             limit_validation,
             margin,
         } => {
-            // Parse loss function
-            let loss_function_parsed = parse_loss_function(loss);
-
             // Load datasets
             let (train_dataset, validation_dataset) = load_datasets(
                 train_data,
@@ -303,7 +280,6 @@ async fn main() -> Result<()> {
                 *epochs,
                 *batch_size,
                 *initial_lr,
-                loss_function_parsed,
                 *n_heads,
                 *n_layers,
                 *d_model,

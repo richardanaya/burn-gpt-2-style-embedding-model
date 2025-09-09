@@ -13,5 +13,5 @@ pub use embedding::*;
 pub use model::{load_model, save_model, Gpt2Config, Gpt2Model};
 pub use similarity::*;
 pub use tokenizer::*;
-pub use training::{train_model, LossFunction, TrainingConfig};
+pub use training::{train_model, TrainingConfig};
 pub use validation::*;

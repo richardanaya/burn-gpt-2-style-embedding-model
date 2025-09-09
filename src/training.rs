@@ -30,14 +30,6 @@ pub struct TrainingConfig {
     pub num_workers: usize,
     pub seed: u64,
     pub learning_rate: f64,
-    pub loss_function: LossFunction,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum LossFunction {
-    Contrastive,
-    CosineEmbedding,
-    MseSimilarity,
 }
 
 impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<B> {
@@ -95,7 +87,6 @@ pub async fn train_model(
     epochs: usize,
     batch_size: usize,
     initial_lr: f64,
-    loss_function: LossFunction,
     n_heads: usize,
     n_layers: usize,
     d_model: usize,
@@ -123,7 +114,6 @@ pub async fn train_model(
         num_workers: 1,
         seed: 42,
         learning_rate: initial_lr,
-        loss_function,
     };
     let tokenizer = Gpt2Tokenizer::new_simple(context_size)?;
 
