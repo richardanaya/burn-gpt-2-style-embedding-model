@@ -1,6 +1,7 @@
 use anyhow::Result;
 use burn_gpt_n_embedding_model::{
-    calculate_similarity, embed_sentence, train_model, validate_model, LearningRateScheduler, LossFunction, Dataset,
+    calculate_similarity, embed_sentence, train_model, validate_model, Dataset,
+    LearningRateScheduler, LossFunction,
 };
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;

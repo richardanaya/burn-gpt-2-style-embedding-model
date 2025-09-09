@@ -132,7 +132,6 @@ pub fn train_with_learner<B: AutodiffBackend>(
         .num_workers(config.num_workers)
         .build(validation_dataset.clone());
 
-
     println!("📊 Initializing TUI metrics renderer...");
     let renderer = TuiMetricsRenderer::new(TrainingInterrupter::new(), None);
 
@@ -208,7 +207,6 @@ pub async fn train_model(
     margin: f32,
     device: burn::backend::wgpu::WgpuDevice,
 ) -> Result<()> {
-
     let model_config = Gpt2Config {
         vocab_size: 50257,
         max_seq_len: context_size,
