@@ -64,6 +64,23 @@ impl Dataset {
         Ok(Dataset { examples })
     }
 
+    /// Create a dataset from a vector of (sentence1, sentence2, label) tuples
+    /// This is useful for creating simple test datasets programmatically
+    pub fn from_pairs(pairs: Vec<(&str, &str, f32)>) -> Self {
+        let examples = pairs
+            .into_iter()
+            .enumerate()
+            .map(|(i, (sentence1, sentence2, label))| TrainingExample {
+                id: i as u32,
+                sentence1: sentence1.to_string(),
+                sentence2: sentence2.to_string(),
+                label: if label > 0.5 { 1 } else { 0 }, // Convert float to binary label
+            })
+            .collect();
+
+        Dataset { examples }
+    }
+
     /// Get the number of examples in the dataset
     pub fn len(&self) -> usize {
         self.examples.len()
@@ -283,5 +300,29 @@ mod tests {
         assert_eq!(batches[2].len(), 1);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_dataset_from_pairs() {
+        let dummy_pairs = vec![
+            ("What is Rust?", "Explain Rust language.", 1.0),
+            ("Cat", "Dog", 0.0),
+            ("Fast car", "Quick automobile", 1.0),
+            ("Coffee", "Tea", 0.0),
+        ];
+
+        let dataset = Dataset::from_pairs(dummy_pairs);
+
+        assert_eq!(dataset.len(), 4);
+        assert_eq!(dataset.examples[0].sentence1, "What is Rust?");
+        assert_eq!(dataset.examples[0].sentence2, "Explain Rust language.");
+        assert_eq!(dataset.examples[0].label, 1); // 1.0 > 0.5 -> 1
+        assert_eq!(dataset.examples[1].label, 0); // 0.0 <= 0.5 -> 0
+        assert_eq!(dataset.examples[2].label, 1);
+        assert_eq!(dataset.examples[3].label, 0);
+
+        let stats = dataset.statistics();
+        assert_eq!(stats.similar_pairs, 2);
+        assert_eq!(stats.dissimilar_pairs, 2);
     }
 }
