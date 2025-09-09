@@ -75,6 +75,10 @@ enum Commands {
         /// Margin parameter for contrastive loss (default: 1.0)
         #[arg(long, default_value = "1.0")]
         margin: f32,
+
+        /// Disable TUI and use simple console output for training
+        #[arg(long)]
+        no_tui: bool,
     },
 
     /// Get vector embedding for a sentence
@@ -251,6 +255,7 @@ async fn main() -> Result<()> {
             limit_train,
             limit_validation,
             margin,
+            no_tui,
         } => {
             // Load datasets
             let (train_dataset, validation_dataset) = load_datasets(
@@ -285,6 +290,7 @@ async fn main() -> Result<()> {
                 *d_model,
                 *context_size,
                 *margin,
+                *no_tui,
                 device,
             )
             .await

@@ -92,6 +92,7 @@ pub async fn train_model(
     d_model: usize,
     context_size: usize,
     margin: f32,
+    no_tui: bool,
     device: burn::backend::wgpu::WgpuDevice,
 ) -> Result<()> {
     let model_config = Gpt2Config {
@@ -146,12 +147,18 @@ pub async fn train_model(
         .num_workers(config.num_workers)
         .build(burn_validation_dataset.clone());
 
-    println!("📊 Initializing TUI metrics renderer...");
-    let renderer = TuiMetricsRenderer::new(TrainingInterrupter::new(), None);
+    let mut learner_builder =
+        LearnerBuilder::new(output_dir).with_file_checkpointer(CompactRecorder::new());
 
-    let learner = LearnerBuilder::new(output_dir)
-        .with_file_checkpointer(CompactRecorder::new())
-        .renderer(renderer)
+    if !no_tui {
+        println!("📊 Initializing TUI metrics renderer...");
+        let renderer = TuiMetricsRenderer::new(TrainingInterrupter::new(), None);
+        learner_builder = learner_builder.renderer(renderer);
+    } else {
+        println!("📊 Running in headless mode (no TUI)...");
+    }
+
+    let learner = learner_builder
         .devices(vec![device.clone()])
         .num_epochs(config.num_epochs)
         .metric_train_numeric(LearningRateMetric::new())
