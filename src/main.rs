@@ -1,6 +1,6 @@
 use anyhow::Result;
 use burn_gpt_n_embedding_model::{
-    calculate_similarity, embed_sentence, train_model, validate_model, Dataset,
+     embed_sentence, train_model, Dataset,
 };
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -96,76 +96,6 @@ enum Commands {
         n_heads: usize,
 
         /// Number of transformer layers (default: 12)
-        #[arg(long, default_value = "12")]
-        n_layers: usize,
-
-        /// Embedding dimension size (default: 768)
-        #[arg(long, default_value = "768")]
-        d_model: usize,
-
-        /// Maximum sequence length / context size (default: 1024)
-        #[arg(long, default_value = "1024")]
-        context_size: usize,
-    },
-
-    /// Validate model accuracy on a dataset
-    Validate {
-        /// Path to the trained model file
-        #[arg(short, long)]
-        model: PathBuf,
-
-        /// Path to validation TSV file
-        #[arg(short, long)]
-        validation_data: PathBuf,
-
-        /// Batch size for validation (default: 4)
-        #[arg(short, long, default_value = "8")]
-        batch_size: usize,
-
-        /// Number of attention heads (default: 12)
-        #[arg(long, default_value = "12")]
-        n_heads: usize,
-
-        /// Number of transformer layers (default: 12)
-        #[arg(long, default_value = "12")]
-        n_layers: usize,
-
-        /// Embedding dimension size (default: 768)
-        #[arg(long, default_value = "768")]
-        d_model: usize,
-
-        /// Maximum sequence length / context size (default: 1024)
-        #[arg(long, default_value = "1024")]
-        context_size: usize,
-
-        /// Limit validation samples (for testing)
-        #[arg(long)]
-        limit: Option<usize>,
-    },
-
-    /// Calculate similarity between two sentences
-    Similarity {
-        /// Path to the trained model file (optional - will use random weights if not provided)
-        #[arg(short, long)]
-        model: Option<PathBuf>,
-
-        /// First sentence
-        #[arg(long)]
-        sentence1: String,
-
-        /// Second sentence
-        #[arg(long)]
-        sentence2: String,
-
-        /// Show all similarity metrics (not just cosine)
-        #[arg(long)]
-        all_metrics: bool,
-
-        /// Number of attention heads (default: 4)
-        #[arg(long, default_value = "12")]
-        n_heads: usize,
-
-        /// Number of transformer layers (default: 4)
         #[arg(long, default_value = "12")]
         n_layers: usize,
 
@@ -303,54 +233,6 @@ async fn main() -> Result<()> {
                 model.as_ref(),
                 sentence,
                 format,
-                *n_heads,
-                *n_layers,
-                *d_model,
-                *context_size,
-                device,
-            )
-            .await
-        }
-
-        Commands::Validate {
-            model,
-            validation_data,
-            batch_size,
-            n_heads,
-            n_layers,
-            d_model,
-            context_size,
-            limit,
-        } => {
-            validate_model::<Backend>(
-                model,
-                validation_data,
-                *batch_size,
-                *n_heads,
-                *n_layers,
-                *d_model,
-                *context_size,
-                *limit,
-                device,
-            )
-            .await
-        }
-
-        Commands::Similarity {
-            model,
-            sentence1,
-            sentence2,
-            all_metrics,
-            n_heads,
-            n_layers,
-            d_model,
-            context_size,
-        } => {
-            calculate_similarity::<Backend>(
-                model.as_ref(),
-                sentence1,
-                sentence2,
-                *all_metrics,
                 *n_heads,
                 *n_layers,
                 *d_model,
