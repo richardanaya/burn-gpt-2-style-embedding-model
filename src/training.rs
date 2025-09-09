@@ -5,6 +5,7 @@ use crate::{
     Gpt2Config, Gpt2Model, Gpt2Tokenizer,
 };
 use anyhow::Result;
+use tokenizers::Tokenizer;
 use burn::data::dataloader::DataLoaderBuilder;
 use burn::grad_clipping::GradientClippingConfig;
 use burn::optim::decay::WeightDecayConfig;
@@ -128,6 +129,7 @@ impl<B: Backend> ValidStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<
 pub async fn train_model(
     train_dataset: Dataset,
     validation_dataset: Option<Dataset>,
+    tokenizer_path: &PathBuf,
     output_dir: &PathBuf,
     epochs: usize,
     batch_size: usize,
@@ -139,8 +141,19 @@ pub async fn train_model(
     no_tui: bool,
     device: burn::backend::wgpu::WgpuDevice,
 ) -> Result<()> {
+    // Load vocab size from tokenizer
+    if !tokenizer_path.exists() {
+        anyhow::bail!("Tokenizer file not found: {}. Please run 'tokens create' first.", tokenizer_path.display());
+    }
+    
+    let tokenizer = Tokenizer::from_file(tokenizer_path)
+        .map_err(|e| anyhow::anyhow!("Failed to load tokenizer: {}", e))?;
+    
+    let vocab_size = tokenizer.get_vocab_size(true); // Include added tokens
+    println!("📚 Using vocabulary size: {} (from {})", vocab_size, tokenizer_path.display());
+
     let model_config = Gpt2Config {
-        vocab_size: 50257,
+        vocab_size,
         max_seq_len: context_size,
         d_model,
         n_heads,
