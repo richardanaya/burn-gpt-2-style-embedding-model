@@ -1,7 +1,6 @@
 use anyhow::Result;
 use burn_gpt_n_embedding_model::{
-    calculate_similarity, embed_sentence, train_model, validate_model, Dataset,
-    LearningRateScheduler, LossFunction,
+    calculate_similarity, embed_sentence, train_model, validate_model, Dataset, LossFunction,
 };
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -45,13 +44,9 @@ enum Commands {
         #[arg(short, long, default_value = "8")]
         batch_size: usize,
 
-        /// Learning rate scheduler: fixed, linear-decay, exponential-decay, step-decay, cosine-annealing
-        #[arg(long, default_value = "cosine-annealing")]
-        lr_scheduler: String,
-
-        /// Initial learning rate (default: adaptive based on scheduler)
-        #[arg(long)]
-        initial_lr: Option<f64>,
+        /// Initial learning rate
+        #[arg(long, default_value = "1e-5")]
+        initial_lr: f64,
 
         /// Loss function: contrastive, cosine, or mse
         #[arg(long, default_value = "contrastive")]
@@ -188,45 +183,6 @@ enum Commands {
     },
 }
 
-/// Parse learning rate scheduler from string and automatically choose initial learning rate
-pub fn parse_learning_rate_config(
-    scheduler_str: &str,
-    initial_lr: Option<f64>,
-) -> (LearningRateScheduler, f64) {
-    let (scheduler, auto_lr) = match scheduler_str.to_lowercase().as_str() {
-        "fixed" => (LearningRateScheduler::Fixed, 1e-5),
-        "linear-decay" => (LearningRateScheduler::LinearDecay { final_lr: 1e-6 }, 2e-5),
-        "exponential-decay" => (
-            LearningRateScheduler::ExponentialDecay { decay_rate: 0.95 },
-            1.5e-5,
-        ),
-        "step-decay" => (
-            LearningRateScheduler::StepDecay {
-                step_size: 3,
-                gamma: 0.5,
-            },
-            2e-5,
-        ),
-        "cosine-annealing" => (
-            LearningRateScheduler::CosineAnnealing { min_lr: 1e-6 },
-            2e-5,
-        ),
-        _ => {
-            eprintln!(
-                "Unknown learning rate scheduler: {}. Using cosine-annealing.",
-                scheduler_str
-            );
-            (
-                LearningRateScheduler::CosineAnnealing { min_lr: 1e-6 },
-                2e-5,
-            )
-        }
-    };
-
-    let final_lr = initial_lr.unwrap_or(auto_lr);
-    (scheduler, final_lr)
-}
-
 fn parse_loss_function(loss_function: &str) -> LossFunction {
     match loss_function.to_lowercase().as_str() {
         "contrastive" => LossFunction::Contrastive,
@@ -306,7 +262,6 @@ async fn main() -> Result<()> {
             output_dir,
             epochs,
             batch_size,
-            lr_scheduler,
             initial_lr,
             loss,
             n_heads,
@@ -317,10 +272,6 @@ async fn main() -> Result<()> {
             limit_validation,
             margin,
         } => {
-            // Parse learning rate scheduler and automatically choose initial learning rate
-            let (lr_scheduler_parsed, initial_learning_rate) =
-                parse_learning_rate_config(lr_scheduler, *initial_lr);
-
             // Parse loss function
             let loss_function_parsed = parse_loss_function(loss);
 
@@ -341,7 +292,7 @@ async fn main() -> Result<()> {
             }
             println!("🔄 Epochs: {}", epochs);
             println!("📦 Batch Size: {}", batch_size);
-            println!("🎯 Learning Rate: {:.2e}", initial_learning_rate);
+            println!("🎯 Learning Rate: {:.2e}", initial_lr);
             println!("💾 Output dir: {}", output_dir.display());
             println!();
 
@@ -351,8 +302,7 @@ async fn main() -> Result<()> {
                 output_dir,
                 *epochs,
                 *batch_size,
-                &lr_scheduler_parsed,
-                initial_learning_rate,
+                *initial_lr,
                 loss_function_parsed,
                 *n_heads,
                 *n_layers,

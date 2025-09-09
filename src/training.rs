@@ -40,15 +40,6 @@ pub enum LossFunction {
     MseSimilarity,
 }
 
-#[derive(Debug, Clone)]
-pub enum LearningRateScheduler {
-    Fixed,
-    LinearDecay { final_lr: f64 },
-    ExponentialDecay { decay_rate: f64 },
-    StepDecay { step_size: usize, gamma: f64 },
-    CosineAnnealing { min_lr: f64 },
-}
-
 impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<B> {
     fn step(&self, batch: TrainingBatch<B>) -> TrainOutput<RegressionOutput<B>> {
         let emb1 = self.get_sentence_embedding(batch.sentence1.clone());
@@ -97,107 +88,12 @@ impl<B: Backend> ValidStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<
     }
 }
 
-fn create_artifact_dir(artifact_dir: &str) {
-    std::fs::remove_dir_all(artifact_dir).ok();
-    std::fs::create_dir_all(artifact_dir).ok();
-}
-
-pub fn train_with_learner<B: AutodiffBackend>(
-    artifact_dir: &str,
-    config: TrainingConfig,
-    device: B::Device,
-    train_dataset: BurnTrainingDataset,
-    validation_dataset: BurnTrainingDataset,
-    tokenizer: Gpt2Tokenizer,
-    _lr_scheduler: LearningRateScheduler,
-) {
-    create_artifact_dir(artifact_dir);
-    config
-        .save(format!("{artifact_dir}/config.json"))
-        .expect("Config should be saved successfully");
-
-    B::seed(config.seed);
-
-    let batcher = TrainingBatcher::new(tokenizer.clone());
-
-    let dataloader_train = DataLoaderBuilder::new(batcher.clone())
-        .batch_size(config.batch_size)
-        .shuffle(config.seed)
-        .num_workers(config.num_workers)
-        .build(train_dataset.clone());
-
-    let dataloader_test = DataLoaderBuilder::new(batcher)
-        .batch_size(config.batch_size)
-        .shuffle(config.seed)
-        .num_workers(config.num_workers)
-        .build(validation_dataset.clone());
-
-    println!("📊 Initializing TUI metrics renderer...");
-    let renderer = TuiMetricsRenderer::new(TrainingInterrupter::new(), None);
-
-    let learner = LearnerBuilder::new(artifact_dir)
-        .with_file_checkpointer(CompactRecorder::new())
-        .renderer(renderer)
-        .devices(vec![device.clone()])
-        .num_epochs(config.num_epochs)
-        .metric_train_numeric(LearningRateMetric::new())
-        .metric_valid_numeric(LearningRateMetric::new())
-        .metric_train_numeric(LossMetric::new())
-        .metric_valid_numeric(LossMetric::new())
-        .summary()
-        .build(
-            config.model.init::<B>(&device),
-            config.optimizer.init(),
-            config.learning_rate,
-        );
-
-    let model_trained = learner.fit(dataloader_train, dataloader_test);
-
-    println!("\n✅ Training Complete!");
-
-    if let Ok(summary) = LearnerSummary::new(&artifact_dir, &["Loss"]) {
-        print_educational_metrics_explanation(&summary);
-    } else {
-        println!("📊 Unable to load training metrics summary for educational analysis.");
-    }
-
-    model_trained
-        .save_file(format!("{artifact_dir}/model"), &CompactRecorder::new())
-        .expect("Trained model should be saved successfully");
-
-    println!("💾 Model saved to: {}/model", artifact_dir);
-}
-
-impl LearningRateScheduler {
-    pub fn get_learning_rate(&self, epoch: usize, initial_lr: f64, total_epochs: usize) -> f64 {
-        match self {
-            LearningRateScheduler::Fixed => initial_lr,
-            LearningRateScheduler::LinearDecay { final_lr } => {
-                let progress = epoch as f64 / (total_epochs - 1) as f64;
-                initial_lr + (final_lr - initial_lr) * progress
-            }
-            LearningRateScheduler::ExponentialDecay { decay_rate } => {
-                initial_lr * decay_rate.powf(epoch as f64)
-            }
-            LearningRateScheduler::StepDecay { step_size, gamma } => {
-                initial_lr * gamma.powf((epoch / step_size) as f64)
-            }
-            LearningRateScheduler::CosineAnnealing { min_lr } => {
-                let progress = epoch as f64 / (total_epochs - 1) as f64;
-                min_lr
-                    + (initial_lr - min_lr) * (1.0 + (std::f64::consts::PI * progress).cos()) / 2.0
-            }
-        }
-    }
-}
-
 pub async fn train_model(
     train_dataset: Dataset,
     validation_dataset: Option<Dataset>,
     output_dir: &PathBuf,
     epochs: usize,
     batch_size: usize,
-    lr_scheduler: &LearningRateScheduler,
     initial_lr: f64,
     loss_function: LossFunction,
     n_heads: usize,
@@ -238,15 +134,65 @@ pub async fn train_model(
         BurnTrainingDataset::from_dataset(&train_dataset)
     };
 
-    train_with_learner::<WgpuAutodiffBackend>(
-        &output_dir.to_string_lossy(),
-        config,
-        device,
-        burn_train_dataset,
-        burn_validation_dataset,
-        tokenizer,
-        lr_scheduler.clone(),
-    );
+    std::fs::remove_dir_all(output_dir).ok();
+    std::fs::create_dir_all(output_dir).ok();
+    config
+        .save(format!("{}/config.json", output_dir.display()))
+        .expect("Config should be saved successfully");
+
+    WgpuAutodiffBackend::seed(config.seed);
+
+    let batcher = TrainingBatcher::new(tokenizer.clone());
+
+    let dataloader_train = DataLoaderBuilder::new(batcher.clone())
+        .batch_size(config.batch_size)
+        .shuffle(config.seed)
+        .num_workers(config.num_workers)
+        .build(burn_train_dataset.clone());
+
+    let dataloader_test = DataLoaderBuilder::new(batcher)
+        .batch_size(config.batch_size)
+        .shuffle(config.seed)
+        .num_workers(config.num_workers)
+        .build(burn_validation_dataset.clone());
+
+    println!("📊 Initializing TUI metrics renderer...");
+    let renderer = TuiMetricsRenderer::new(TrainingInterrupter::new(), None);
+
+    let learner = LearnerBuilder::new(output_dir)
+        .with_file_checkpointer(CompactRecorder::new())
+        .renderer(renderer)
+        .devices(vec![device.clone()])
+        .num_epochs(config.num_epochs)
+        .metric_train_numeric(LearningRateMetric::new())
+        .metric_valid_numeric(LearningRateMetric::new())
+        .metric_train_numeric(LossMetric::new())
+        .metric_valid_numeric(LossMetric::new())
+        .summary()
+        .build(
+            config.model.init::<WgpuAutodiffBackend>(&device),
+            config.optimizer.init(),
+            config.learning_rate,
+        );
+
+    let model_trained = learner.fit(dataloader_train, dataloader_test);
+
+    println!("\n✅ Training Complete!");
+
+    if let Ok(summary) = LearnerSummary::new(output_dir, &["Loss"]) {
+        print_educational_metrics_explanation(&summary);
+    } else {
+        println!("📊 Unable to load training metrics summary for educational analysis.");
+    }
+
+    model_trained
+        .save_file(
+            format!("{}/model", output_dir.display()),
+            &CompactRecorder::new(),
+        )
+        .expect("Trained model should be saved successfully");
+
+    println!("💾 Model saved to: {}/model", output_dir.display());
 
     Ok(())
 }
