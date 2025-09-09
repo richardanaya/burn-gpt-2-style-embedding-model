@@ -1,4 +1,6 @@
+use crate::batcher::TrainingItem;
 use anyhow::{anyhow, Result};
+use burn::data::dataloader::Dataset as BurnDataset;
 use csv::ReaderBuilder;
 use serde::Deserialize;
 use std::path::Path;
@@ -178,6 +180,40 @@ impl TrainingBatch {
     /// Get the batch size
     pub fn batch_size(&self) -> usize {
         self.labels.len()
+    }
+}
+
+/// Wrapper for our dataset to implement Burn's Dataset trait
+#[derive(Clone, Debug)]
+pub struct BurnTrainingDataset {
+    pub items: Vec<TrainingItem>,
+}
+
+impl BurnTrainingDataset {
+    pub fn from_dataset(dataset: &Dataset) -> Self {
+        let items = dataset
+            .examples
+            .iter()
+            .map(|example| {
+                TrainingItem::new(
+                    example.sentence1.clone(),
+                    example.sentence2.clone(),
+                    example.label as f32,
+                )
+            })
+            .collect();
+
+        Self { items }
+    }
+}
+
+impl BurnDataset<TrainingItem> for BurnTrainingDataset {
+    fn get(&self, index: usize) -> Option<TrainingItem> {
+        self.items.get(index).cloned()
+    }
+
+    fn len(&self) -> usize {
+        self.items.len()
     }
 }
 

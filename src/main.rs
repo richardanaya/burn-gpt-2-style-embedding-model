@@ -1,6 +1,6 @@
 use anyhow::Result;
 use burn_gpt_n_embedding_model::{
-    calculate_similarity, embed_sentence, train_model, validate_model,
+    calculate_similarity, embed_sentence, train_model, validate_model, LearningRateScheduler,
 };
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -55,14 +55,6 @@ enum Commands {
         /// Loss function: contrastive, cosine, or mse
         #[arg(long, default_value = "contrastive")]
         loss: String,
-
-        /// Checkpoint frequency (save every N epochs)
-        #[arg(long, default_value = "1")]
-        checkpoint_every: usize,
-
-        /// Load pre-trained model to continue training
-        #[arg(long)]
-        resume_from: Option<PathBuf>,
 
         /// Number of attention heads (default: 12)
         #[arg(long, default_value = "12")]
@@ -195,6 +187,45 @@ enum Commands {
     },
 }
 
+/// Parse learning rate scheduler from string and automatically choose initial learning rate
+pub fn parse_learning_rate_config(
+    scheduler_str: &str,
+    initial_lr: Option<f64>,
+) -> (LearningRateScheduler, f64) {
+    let (scheduler, auto_lr) = match scheduler_str.to_lowercase().as_str() {
+        "fixed" => (LearningRateScheduler::Fixed, 1e-5),
+        "linear-decay" => (LearningRateScheduler::LinearDecay { final_lr: 1e-6 }, 2e-5),
+        "exponential-decay" => (
+            LearningRateScheduler::ExponentialDecay { decay_rate: 0.95 },
+            1.5e-5,
+        ),
+        "step-decay" => (
+            LearningRateScheduler::StepDecay {
+                step_size: 3,
+                gamma: 0.5,
+            },
+            2e-5,
+        ),
+        "cosine-annealing" => (
+            LearningRateScheduler::CosineAnnealing { min_lr: 1e-6 },
+            2e-5,
+        ),
+        _ => {
+            eprintln!(
+                "Unknown learning rate scheduler: {}. Using cosine-annealing.",
+                scheduler_str
+            );
+            (
+                LearningRateScheduler::CosineAnnealing { min_lr: 1e-6 },
+                2e-5,
+            )
+        }
+    };
+
+    let final_lr = initial_lr.unwrap_or(auto_lr);
+    (scheduler, final_lr)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -212,8 +243,6 @@ async fn main() -> Result<()> {
             lr_scheduler,
             initial_lr,
             loss,
-            checkpoint_every,
-            resume_from,
             n_heads,
             n_layers,
             d_model,
@@ -222,17 +251,19 @@ async fn main() -> Result<()> {
             limit_validation,
             margin,
         } => {
+            // Parse learning rate scheduler and automatically choose initial learning rate
+            let (lr_scheduler_parsed, initial_learning_rate) =
+                parse_learning_rate_config(lr_scheduler, *initial_lr);
+
             train_model(
                 train_data,
                 validation_data.as_ref(),
                 output_dir,
                 *epochs,
                 *batch_size,
-                lr_scheduler,
-                *initial_lr,
+                &lr_scheduler_parsed,
+                initial_learning_rate,
                 loss,
-                *checkpoint_every,
-                resume_from.as_ref(),
                 *n_heads,
                 *n_layers,
                 *d_model,

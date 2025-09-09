@@ -87,7 +87,7 @@ impl<B: Backend> Batcher<B, TrainingItem, TrainingBatch<B>> for TrainingBatcher 
 
         // GPT-2 pad token ID is 50256, not 0 (which is a valid BPE token)
         const PAD_TOKEN_ID: u32 = 50256;
-        
+
         for seq in sentence1_ids.iter() {
             let mut padded = seq.clone();
             padded.resize(max_len1, PAD_TOKEN_ID);

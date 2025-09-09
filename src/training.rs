@@ -1,6 +1,9 @@
-use crate::batcher::{TrainingBatch, TrainingBatcher, TrainingItem};
+use crate::batcher::{TrainingBatch, TrainingBatcher};
 use crate::summary::print_educational_metrics_explanation;
-use crate::{data::Dataset, Gpt2Config, Gpt2Model, Gpt2Tokenizer};
+use crate::{
+    data::{BurnTrainingDataset, Dataset},
+    Gpt2Config, Gpt2Model, Gpt2Tokenizer,
+};
 use anyhow::Result;
 use burn::data::dataloader::{DataLoaderBuilder, Dataset as BurnDataset};
 use burn::grad_clipping::GradientClippingConfig;
@@ -69,42 +72,6 @@ pub enum LearningRateScheduler {
     CosineAnnealing { min_lr: f64 },
 }
 
-
-/// Wrapper for our dataset to implement Burn's Dataset trait
-#[derive(Clone, Debug)]
-pub struct BurnTrainingDataset {
-    pub items: Vec<TrainingItem>,
-}
-
-impl BurnTrainingDataset {
-    pub fn from_dataset(dataset: &Dataset) -> Self {
-        let items = dataset
-            .examples
-            .iter()
-            .map(|example| {
-                TrainingItem::new(
-                    example.sentence1.clone(),
-                    example.sentence2.clone(),
-                    example.label as f32,
-                )
-            })
-            .collect();
-
-        Self { items }
-    }
-}
-
-impl BurnDataset<TrainingItem> for BurnTrainingDataset {
-    fn get(&self, index: usize) -> Option<TrainingItem> {
-        self.items.get(index).cloned()
-    }
-
-    fn len(&self) -> usize {
-        self.items.len()
-    }
-}
-
-
 /// Implement TrainStep for our Gpt2Model
 impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, RegressionOutput<B>> for Gpt2Model<B> {
     fn step(&self, batch: TrainingBatch<B>) -> TrainOutput<RegressionOutput<B>> {
@@ -124,7 +91,8 @@ impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, RegressionOutput<B>> for Gp
 
         // Contrastive loss: ½ * y * d² + ½ * (1−y) * max(0, margin − d)²
         let pos_loss = y.clone() * sq_dist.clone();
-        let neg_loss = (Tensor::<B, 1>::ones_like(&y) - y.clone()) * (self.margin - dist).clamp_min(0.0).powf_scalar(2.0);
+        let neg_loss = (Tensor::<B, 1>::ones_like(&y) - y.clone())
+            * (self.margin - dist).clamp_min(0.0).powf_scalar(2.0);
         let loss_tensor: Tensor<B, 1> = 0.5 * (pos_loss + neg_loss).mean();
 
         // Calculate cosine similarity as prediction for metrics (map to 0-1 range)
@@ -135,8 +103,11 @@ impl<B: AutodiffBackend> TrainStep<TrainingBatch<B>, RegressionOutput<B>> for Gp
         // Map from [-1,1] to [0,1] range to match label scale
         let predictions = (cosine_sim + 1.0) * 0.5;
 
-        let output =
-            RegressionOutput::new(batch.labels, predictions.detach(), loss_tensor.clone().unsqueeze());
+        let output = RegressionOutput::new(
+            batch.labels,
+            predictions.detach(),
+            loss_tensor.clone().unsqueeze(),
+        );
         let grads = loss_tensor.backward();
         TrainOutput::new(self, grads, output)
     }
@@ -287,48 +258,6 @@ impl LearningRateScheduler {
     }
 }
 
-/// Parse learning rate scheduler from string and automatically choose initial learning rate
-pub fn parse_learning_rate_config(
-    scheduler_str: &str,
-    initial_lr: Option<f64>,
-) -> (LearningRateScheduler, f64) {
-    let (scheduler, auto_lr) = match scheduler_str.to_lowercase().as_str() {
-        "fixed" => (LearningRateScheduler::Fixed, 1e-5),
-        "linear-decay" => (
-            LearningRateScheduler::LinearDecay { final_lr: 1e-6 },
-            2e-5,
-        ),
-        "exponential-decay" => (
-            LearningRateScheduler::ExponentialDecay { decay_rate: 0.95 },
-            1.5e-5,
-        ),
-        "step-decay" => (
-            LearningRateScheduler::StepDecay {
-                step_size: 3,
-                gamma: 0.5,
-            },
-            2e-5,
-        ),
-        "cosine-annealing" => (
-            LearningRateScheduler::CosineAnnealing { min_lr: 1e-6 },
-            2e-5,
-        ),
-        _ => {
-            eprintln!(
-                "Unknown learning rate scheduler: {}. Using cosine-annealing.",
-                scheduler_str
-            );
-            (
-                LearningRateScheduler::CosineAnnealing { min_lr: 1e-6 },
-                2e-5,
-            )
-        }
-    };
-
-    let final_lr = initial_lr.unwrap_or(auto_lr);
-    (scheduler, final_lr)
-}
-
 /// Train the model on TSV data
 pub async fn train_model(
     train_data_path: &PathBuf,
@@ -336,11 +265,9 @@ pub async fn train_model(
     output_dir: &PathBuf,
     epochs: usize,
     batch_size: usize,
-    lr_scheduler: &str,
-    initial_lr: Option<f64>,
+    lr_scheduler: &LearningRateScheduler,
+    initial_lr: f64,
     loss_function: &str,
-    _checkpoint_every: usize,
-    _resume_from: Option<&PathBuf>,
     n_heads: usize,
     n_layers: usize,
     d_model: usize,
@@ -398,9 +325,7 @@ pub async fn train_model(
         None
     };
 
-    // Parse learning rate scheduler and automatically choose initial learning rate
-    let (lr_scheduler, initial_learning_rate) =
-        parse_learning_rate_config(lr_scheduler, initial_lr);
+    // Learning rate scheduler and initial learning rate are now passed as parameters
 
     // Parse loss function
     let loss_fn = match loss_function.to_lowercase().as_str() {
@@ -430,12 +355,14 @@ pub async fn train_model(
     // Create training configuration using the new Config pattern
     let config = TrainingConfig {
         model: model_config,
-        optimizer: AdamConfig::new().with_weight_decay(Some(WeightDecayConfig{ penalty: 0.01})).with_grad_clipping(Some(GradientClippingConfig::Value(1.0))),
+        optimizer: AdamConfig::new()
+            .with_weight_decay(Some(WeightDecayConfig { penalty: 0.01 }))
+            .with_grad_clipping(Some(GradientClippingConfig::Value(1.0))),
         num_epochs: epochs,
         batch_size,
         num_workers: 1,
         seed: 42,
-        learning_rate: initial_learning_rate,
+        learning_rate: initial_lr,
         loss_function: loss_fn,
     };
     // Create tokenizer
@@ -471,7 +398,7 @@ pub async fn train_model(
         burn_train_dataset,
         burn_validation_dataset,
         tokenizer,
-        lr_scheduler,
+        lr_scheduler.clone(),
     );
 
     println!("\n🎉 Training completed!");
