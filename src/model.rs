@@ -34,8 +34,8 @@ impl Default for Gpt2Config {
             vocab_size: 50257, // GPT-2 vocabulary size
             max_seq_len: 1024, // Maximum sequence length
             d_model: 768,      // Embedding dimension
-            n_heads: 4,        // Number of attention heads (reduced from 12)
-            n_layers: 4,       // Number of transformer layers (reduced from 12)
+            n_heads: 12,       // Number of attention heads (GPT-2 117M)
+            n_layers: 12,      // Number of transformer layers (GPT-2 117M)
             dropout: 0.1,      // Dropout rate
             margin: 1.0,       // Default margin for contrastive loss
         }

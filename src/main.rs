@@ -72,7 +72,6 @@ enum Commands {
         #[arg(long, default_value = "0")]
         limit_validation: usize,
 
-
         /// Disable TUI and use simple console output for training
         #[arg(long)]
         no_tui: bool,
