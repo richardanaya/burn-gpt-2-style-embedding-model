@@ -1,6 +1,6 @@
 use anyhow::Result;
 use burn_gpt_n_embedding_model::{
-    calculate_similarity, embed_sentence, train_model, validate_model, LearningRateScheduler,
+    calculate_similarity, embed_sentence, train_model, validate_model, LearningRateScheduler, LossFunction, Dataset,
 };
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -226,6 +226,71 @@ pub fn parse_learning_rate_config(
     (scheduler, final_lr)
 }
 
+fn parse_loss_function(loss_function: &str) -> LossFunction {
+    match loss_function.to_lowercase().as_str() {
+        "contrastive" => LossFunction::Contrastive,
+        "cosine" => LossFunction::CosineEmbedding,
+        "mse" => LossFunction::MseSimilarity,
+        _ => {
+            eprintln!(
+                "Unknown loss function: {}. Using contrastive loss.",
+                loss_function
+            );
+            LossFunction::Contrastive
+        }
+    }
+}
+
+fn load_datasets(
+    train_data_path: &PathBuf,
+    validation_data_path: Option<&PathBuf>,
+    limit_train: usize,
+    limit_validation: usize,
+) -> Result<(Dataset, Option<Dataset>)> {
+    println!("Loading training data from: {}", train_data_path.display());
+    let mut train_dataset = Dataset::from_tsv(train_data_path)?;
+
+    if limit_train > 0 {
+        println!(
+            "🔬 Limiting training data to {} examples for testing",
+            limit_train
+        );
+        train_dataset.limit(limit_train);
+    }
+
+    train_dataset.statistics().print();
+    println!();
+
+    let validation_dataset = if let Some(val_path) = validation_data_path {
+        println!("Loading validation data from: {}", val_path.display());
+        let mut val_dataset = Dataset::from_tsv(val_path)?;
+
+        if limit_validation > 0 {
+            println!(
+                "🔬 Limiting validation data to {} examples for testing (before: {})",
+                limit_validation,
+                val_dataset.examples.len()
+            );
+            val_dataset.limit(limit_validation);
+            println!("🔬 After limiting: {} examples", val_dataset.examples.len());
+        } else {
+            println!(
+                "🔬 No validation limit specified (limit_validation = {})",
+                limit_validation
+            );
+        }
+
+        val_dataset.statistics().print();
+        println!();
+        Some(val_dataset)
+    } else {
+        println!("No validation data provided");
+        None
+    };
+
+    Ok((train_dataset, validation_dataset))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -255,21 +320,43 @@ async fn main() -> Result<()> {
             let (lr_scheduler_parsed, initial_learning_rate) =
                 parse_learning_rate_config(lr_scheduler, *initial_lr);
 
-            train_model(
+            // Parse loss function
+            let loss_function_parsed = parse_loss_function(loss);
+
+            // Load datasets
+            let (train_dataset, validation_dataset) = load_datasets(
                 train_data,
                 validation_data.as_ref(),
+                *limit_train,
+                *limit_validation,
+            )?;
+
+            // Display training configuration
+            println!("\n🔥 Starting Training with Burn Framework");
+            println!("==========================================");
+            println!("📊 Training Examples: {}", train_dataset.len());
+            if let Some(ref val_dataset) = validation_dataset {
+                println!("📊 Validation Examples: {}", val_dataset.len());
+            }
+            println!("🔄 Epochs: {}", epochs);
+            println!("📦 Batch Size: {}", batch_size);
+            println!("🎯 Learning Rate: {:.2e}", initial_learning_rate);
+            println!("💾 Output dir: {}", output_dir.display());
+            println!();
+
+            train_model(
+                train_dataset,
+                validation_dataset,
                 output_dir,
                 *epochs,
                 *batch_size,
                 &lr_scheduler_parsed,
                 initial_learning_rate,
-                loss,
+                loss_function_parsed,
                 *n_heads,
                 *n_layers,
                 *d_model,
                 *context_size,
-                *limit_train,
-                *limit_validation,
                 *margin,
                 device,
             )
