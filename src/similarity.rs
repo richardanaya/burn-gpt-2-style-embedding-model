@@ -9,9 +9,8 @@ use simsimd::SpatialSimilarity;
 /// This function uses SimSIMD's optimized SIMD implementation for better performance.
 /// Note: SimSIMD returns cosine *distance* (1 - similarity), so we convert it back.
 pub fn cosine_similarity<B: Backend>(v1: Tensor<B, 1>, v2: Tensor<B, 1>) -> Tensor<B, 1> {
-    let dot  = (v1.clone() * v2.clone()).sum();
-    let norm = v1.clone().powf_scalar(2.0).sum().sqrt()
-             * v2.powf_scalar(2.0).sum().sqrt();
+    let dot = (v1.clone() * v2.clone()).sum();
+    let norm = v1.clone().powf_scalar(2.0).sum().sqrt() * v2.powf_scalar(2.0).sum().sqrt();
     dot / (norm + 1e-8)
 }
 
