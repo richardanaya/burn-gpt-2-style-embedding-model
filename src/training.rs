@@ -576,7 +576,7 @@ pub async fn train_model(
         model: model_config,
         optimizer: AdamConfig::new()
             .with_weight_decay(Some(WeightDecayConfig { penalty: 0.01 }))
-            .with_grad_clipping(Some(GradientClippingConfig::Value(1.0))),
+            .with_grad_clipping(Some(GradientClippingConfig::Norm(1.0))),
         num_epochs: epochs,
         batch_size,
         num_workers: 1,
