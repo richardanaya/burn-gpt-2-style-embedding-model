@@ -1,13 +1,9 @@
 use anyhow::Result;
 use burn_gpt_n_embedding_model::{
-     embed_sentence, train_model, Dataset,
+      train_model, Dataset,
 };
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-
-// For our case, we need a backend where InnerBackend = B (i.e., not wrapped by Autodiff)
-// This means we should use the inner backend directly for training
-type Backend = burn::backend::wgpu::Wgpu;
 
 /// GPT-2 Embedding Model CLI
 ///
@@ -75,37 +71,6 @@ enum Commands {
         /// Disable TUI and use simple console output for training
         #[arg(long)]
         no_tui: bool,
-    },
-
-    /// Get vector embedding for a sentence
-    Embed {
-        /// Path to the trained model file (optional - will use random weights if not provided)
-        #[arg(short, long, default_value = "./training_output/model.mpk")]
-        model: Option<PathBuf>,
-
-        /// Sentence to get embedding for
-        #[arg(short, long)]
-        sentence: String,
-
-        /// Output format: json or raw
-        #[arg(short, long, default_value = "json")]
-        format: String,
-
-        /// Number of attention heads (default: 12)
-        #[arg(long, default_value = "12")]
-        n_heads: usize,
-
-        /// Number of transformer layers (default: 12)
-        #[arg(long, default_value = "12")]
-        n_layers: usize,
-
-        /// Embedding dimension size (default: 768)
-        #[arg(long, default_value = "768")]
-        d_model: usize,
-
-        /// Maximum sequence length / context size (default: 1024)
-        #[arg(long, default_value = "1024")]
-        context_size: usize,
     },
 }
 
@@ -215,28 +180,6 @@ async fn main() -> Result<()> {
                 *d_model,
                 *context_size,
                 *no_tui,
-                device,
-            )
-            .await
-        }
-
-        Commands::Embed {
-            model,
-            sentence,
-            format,
-            n_heads,
-            n_layers,
-            d_model,
-            context_size,
-        } => {
-            embed_sentence::<Backend>(
-                model.as_ref(),
-                sentence,
-                format,
-                *n_heads,
-                *n_layers,
-                *d_model,
-                *context_size,
                 device,
             )
             .await
